@@ -33,8 +33,8 @@ inv_logit <- function(x) { 1 / (1 + exp(-x)) }
 
 # define parameters
 # modelling response variable ranging from 0 (= exact pitch match) to 90 (= maximally off), so collapsing negative and positive diviation for now
-subj_n = 100    # number of subjects per language
-lang_n = 10     # number of languages
+subj_n = 20    # number of subjects per language
+lang_n = 2     # number of languages
 b0 = 45         # intercept at zero onset duration large delta (1/2 of 90 Hz which is the max deviation)
 b1 = -1         # fixed effect of diff_dur (for each ms, 1 less delta)
 b2 = -5         # fixed effect of tonal language, i.e. tonal languages are overall more accurate
@@ -56,8 +56,7 @@ df <- add_random(subject = subj_n * lang_n) |>
                                   by = 20),
                    diff_f0 = seq(from = 110,
                                   to = 190,
-                                  by = 10),
-                   stimuli = c("tone", "V", "CV")) |> 
+                                  by = 10)) |> 
         # set up across subject predictors
         add_between("subject", tonal = c("tonal", "non-tonal"))  |>
         add_recode("tonal", "tonal.T", "non-tonal" = 0, "tonal" = 1) |> 
@@ -125,11 +124,13 @@ df |> ggplot(aes(y = resp_beta,
 
 ```{r model}
  
-## !! currently does not run, probably due to priors
+## !! currently takes way too long to run, probably due to priors
 
-priors <- c(# weakly informative prior on SD and factor
-            prior(cauchy(0,0.2), class = b),
-            prior(cauchy(0,0.2), class = sd)
+priors <- c(prior(normal(0,1), class = Intercept),
+            # weakly informative prior on SD and factor
+            prior(normal(0,0.2), class = b),
+            prior(normal(0,0.2), class = sd),
+            prior(gamma(4, 0.1), class = phi)
             #prior(lkj(2), class = cor)
             )
 
@@ -143,7 +144,7 @@ test <- brm(resp_beta ~ diff_dur + (1 | subject),
              cores = 4,
              init = 0,
              backend = "cmdstanr",
-             family = "beta")
+             family = Beta)
 
 ```
 
