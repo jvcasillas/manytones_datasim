@@ -1,0 +1,149 @@
+---
+title: "ManyTones Simulation"
+author: "Timo Roettger"
+date: "2025-03-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      error = FALSE)
+
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, tidyr, dplyr, truncnorm, lme4, faux)
+
+# set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# helper functions
+logit <- function(x) { log(x / (1 - x)) }
+inv_logit <- function(x) { 1 / (1 + exp(-x)) }
+
+```
+
+## Set up variables
+
+```{r sim_design}
+
+# define parameters
+# modelling response variable ranging from 0 (= exact pitch match) to 90 (= maximally off), so collapsing negative and positive diviation for now
+subj_n = 100    # number of subjects per language
+lang_n = 10     # number of languages
+b0 = 45         # intercept at zero onset duration large delta (1/2 of 90 Hz which is the max deviation)
+b1 = -1         # fixed effect of diff_dur (for each ms, 1 less delta)
+b2 = -5         # fixed effect of tonal language, i.e. tonal languages are overall more accurate
+b3 = -0.2       # interaction effect, tonal languages have a 20% stronger diff_dur (b1) effect
+u0s_sd = 1      # random intercept SD for subjects
+u1s_sd = 0.1    # random b1 slope SD for subjects (diff_dur)
+# not inter subj: u2s_sd = 0      # random b2 slope SD for subjects
+r01s = 0.01     # correlation between random effects b0 and b1 for subjects
+# not inter subj: r02s = 0.01     # correlation between random effects b0 and b2 for subjects 
+sigma_sd = 0.02 # error SD
+
+
+# create data frame
+df <- add_random(subject = subj_n * lang_n) |> 
+        # set up within subject predictors
+        add_within("subject", 
+                   diff_dur = seq(from = 40,
+                                  to = 120,
+                                  by = 20),
+                   diff_f0 = seq(from = 110,
+                                  to = 190,
+                                  by = 10),
+                   stimuli = c("tone", "V", "CV")) |> 
+        # set up across subject predictors
+        add_between("subject", tonal = c("tonal", "non-tonal"))  |>
+        add_recode("tonal", "tonal.T", "non-tonal" = 0, "tonal" = 1) |> 
+        # set up by_subject random intercept and slope for diff_dur
+        add_ranef("subject", u0s = u0s_sd, u1s = u1s_sd, .cors = r01s) |> 
+        # add error term (by observation)
+        add_ranef(sigma = sigma_sd) |> 
+        # generate responses as if they are normally distributed without bounds (maybe the equivalent to the underlying latent variable)
+        mutate(response = b0 + u0s + (b1 + u1s) * diff_dur + b2 * tonal.T + b3 * diff_dur * tonal.T + sigma,
+               # response should be bound by 90 and 0, so it should either truncate or transform to beta distribution
+               resp_trunc = norm2trunc(response, 0, 90),
+               # with beta, there are two degrees of freedom (the shape parameters)
+               resp_beta = norm2beta(response, shape1 = 1, shape = 1), 
+        )
+  
+```
+
+
+```{r sanity_checks_plot}
+
+# distribution of `response`
+df |> ggplot(aes(x = response)) +
+  geom_density(fill = "#381AB1", color = NA) +
+  facet_grid(tonal~diff_dur)
+
+# distribution of `resp_trunc`
+df |> ggplot(aes(x = resp_trunc)) +
+  geom_density(fill = "#381AB1", color = NA) +
+  facet_grid(tonal~diff_dur)
+
+# distribution of `resp_beta`
+df |> ggplot(aes(x = resp_beta)) +
+  geom_density(fill = "#381AB1", color = NA) +
+  facet_grid(tonal~diff_dur)
+
+
+# plot
+df |> ggplot(aes(y = resp_beta,
+                 x = diff_dur,
+                 color = tonal)
+             ) +
+  geom_point(alpha = 0.01) + 
+  geom_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              linewidth = 3,
+              color = "white",
+              se = FALSE,
+              fullrange = TRUE) +
+  geom_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              linewidth = 1.5,
+              se = FALSE,
+              fullrange = TRUE) +
+  facet_wrap(~ tonal) +
+  scale_color_manual(values = c("#381AB1", "#25ACBE"))
+  scale_x_continuous(limits = c(0,120)) +
+  scale_y_continuous(limits = c(0,1.0),
+                    breaks = c(0,0.25,0.5,0.75,1)) +
+  labs(x = "duration of f0 onset",
+       y = "difference between perceived pitch and presented pitch")
+  
+
+```
+
+
+```{r model}
+ 
+## !! currently does not run, probably due to priors
+
+priors <- c(# weakly informative prior on SD and factor
+            prior(cauchy(0,0.2), class = b),
+            prior(cauchy(0,0.2), class = sd)
+            #prior(lkj(2), class = cor)
+            )
+
+test <- brm(resp_beta ~ diff_dur + (1 | subject),
+                  data = df, 
+             prior = priors,
+             # common sampling specifications
+             seed = 1234,
+             iter = 4000,
+             chains = 4,
+             cores = 4,
+             init = 0,
+             backend = "cmdstanr",
+             family = "beta")
+
+```
+
