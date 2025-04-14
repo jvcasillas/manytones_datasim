@@ -124,7 +124,7 @@ df |> ggplot(aes(y = resp_beta,
 
 ```{r model}
  
-## !! currently takes way too long to run, probably due to priors
+## !! currently takes way too long (>200s) on my machine to run, probably due to priors
 
 priors <- c(prior(normal(0,1), class = Intercept),
             # weakly informative prior on SD and factor
@@ -145,6 +145,8 @@ test <- brm(resp_beta ~ diff_dur + (1 | subject),
              init = 0,
              backend = "cmdstanr",
              family = Beta)
+
+conditional_effects(test)
 
 ```
 
