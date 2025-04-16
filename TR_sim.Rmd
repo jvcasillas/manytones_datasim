@@ -98,7 +98,7 @@ df |> ggplot(aes(y = resp_beta,
                  x = diff_dur,
                  color = tonal)
              ) +
-  geom_point(alpha = 0.01) + 
+  geom_point(alpha = 0.1) + 
   geom_smooth(method = "glm",
               method.args = list(family = "binomial"),
               linewidth = 3,
@@ -111,12 +111,15 @@ df |> ggplot(aes(y = resp_beta,
               se = FALSE,
               fullrange = TRUE) +
   facet_wrap(~ tonal) +
-  scale_color_manual(values = c("#381AB1", "#25ACBE"))
+  scale_color_manual(values = c("#381AB1", "#25ACBE")) +
   scale_x_continuous(limits = c(0,120)) +
   scale_y_continuous(limits = c(0,1.0),
-                    breaks = c(0,0.25,0.5,0.75,1)) +
-  labs(x = "duration of f0 onset",
-       y = "difference between perceived pitch and presented pitch")
+                    breaks = c(0,0.5,1),
+                    labels = c("0Hz","45Hz","90Hz")) +
+  labs(x = "\nduration of f0 onset",
+       y = "difference between perceived pitch and presented pitch in Hz\n") +
+  theme_minimal() +
+  theme(legend.position = "none")
   
 
 ```
@@ -124,17 +127,17 @@ df |> ggplot(aes(y = resp_beta,
 
 ```{r model}
  
-## !! currently takes way too long (>200s) on my machine to run, probably due to priors
+## !! currently takes way too long (>10mins) on my machine to run, probably due to priors
 
 priors <- c(prior(normal(0,1), class = Intercept),
             # weakly informative prior on SD and factor
-            prior(normal(0,0.2), class = b),
+            prior(normal(0,0.5), class = b),
             prior(normal(0,0.2), class = sd),
             prior(gamma(4, 0.1), class = phi)
             #prior(lkj(2), class = cor)
             )
 
-test <- brm(resp_beta ~ diff_dur + (1 | subject),
+test <- brm(resp_beta ~ diff_dur * as.factor(tonal.T) + (0 + diff_dur | subject),
                   data = df, 
              prior = priors,
              # common sampling specifications
@@ -147,6 +150,8 @@ test <- brm(resp_beta ~ diff_dur + (1 | subject),
              family = Beta)
 
 conditional_effects(test)
+pp_check(test)
+summary(test) # not sure why the CrIs are so large, ESS are also a bit low
 
 ```
 
