@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE,
 # nifty code using the pacman package
 # it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, tidyr, dplyr, truncnorm, lme4, faux)
+pacman::p_load(brms, ggplot2, tidybayes, tidyr, dplyr, truncnorm, lme4, faux)
 
 # set the current working directory to the one where this file is
 current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
@@ -24,6 +24,10 @@ setwd(current_working_dir)
 # helper functions
 logit <- function(x) { log(x / (1 - x)) }
 inv_logit <- function(x) { 1 / (1 + exp(-x)) }
+scale_this <- function(x){
+  (x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE)
+}
+
 
 ```
 
@@ -32,19 +36,20 @@ inv_logit <- function(x) { 1 / (1 + exp(-x)) }
 ```{r sim_design}
 
 # define parameters
-# modelling response variable ranging from 0 (= exact pitch match) to 90 (= maximally off), so collapsing negative and positive diviation for now
-subj_n = 20    # number of subjects per language
-lang_n = 2     # number of languages
-b0 = 45         # intercept at zero onset duration large delta (1/2 of 90 Hz which is the max deviation)
-b1 = -1         # fixed effect of diff_dur (for each ms, 1 less delta)
-b2 = -5         # fixed effect of tonal language, i.e. tonal languages are overall more accurate
-b3 = -0.2       # interaction effect, tonal languages have a 20% stronger diff_dur (b1) effect
-u0s_sd = 1      # random intercept SD for subjects
-u1s_sd = 0.1    # random b1 slope SD for subjects (diff_dur)
+# modelling response variable ranging from 0 (= exact pitch match) to 90 (= maximally off), so collapsing negative and positive deviation for now
+lapse <- .1     # upper bound
+subj_n <- 50    # number of subjects per language
+lang_n <- 4     # number of languages
+b0 <- -3        # intercept at zero onset duration large delta (1/2 of 90 Hz which is the max deviation)
+b1 <- 12        # fixed effect of diff_dur (for each ms, 1 less delta)
+b2 <- 0         # fixed effect of tonal language, i.e. tonal languages are overall more accurate
+b3 <- 0.1         # interaction effect, tonal languages have a 20% stronger diff_dur (b1) effect
+u0s_sd <- 0.1      # random intercept SD for subjects
+u1s_sd <- 0.1    # random b1 slope SD for subjects (diff_dur)
 # not inter subj: u2s_sd = 0      # random b2 slope SD for subjects
-r01s = 0.01     # correlation between random effects b0 and b1 for subjects
+r01s <- 0.1     # correlation between random effects b0 and b1 for subjects
 # not inter subj: r02s = 0.01     # correlation between random effects b0 and b2 for subjects 
-sigma_sd = 0.02 # error SD
+sigma_sd <- 1 # error SD
 
 
 # create data frame
@@ -65,11 +70,16 @@ df <- add_random(subject = subj_n * lang_n) |>
         # add error term (by observation)
         add_ranef(sigma = sigma_sd) |> 
         # generate responses as if they are normally distributed without bounds (maybe the equivalent to the underlying latent variable)
-        mutate(response = b0 + u0s + (b1 + u1s) * diff_dur + b2 * tonal.T + b3 * diff_dur * tonal.T + sigma,
+        #mutate(response = b0 + u0s + (b1 + u1s) * diff_dur + b2 * tonal.T + b3 * diff_dur * tonal.T + sigma,
+        mutate(#scale diff_dur
+               diff_dur_c = scale_this(diff_dur),
+               theta = b0 + u0s + (1-b0-u0s-lapse) * plogis((b1 + u1s) * diff_dur_c + b2 * tonal.T + b3 * diff_dur * tonal.T + sigma),
+               response_binomial = as.integer(rbernoulli(n = length(theta), p = theta))
+               # response = b0 + u0s + (b1 + u1s) * diff_dur + sigma,  
                # response should be bound by 90 and 0, so it should either truncate or transform to beta distribution
-               resp_trunc = norm2trunc(response, 0, 90),
+               #resp_trunc = norm2trunc(response, 0, 90),
                # with beta, there are two degrees of freedom (the shape parameters)
-               resp_beta = norm2beta(response, shape1 = 1, shape = 1), 
+               #resp_beta = norm2beta(response, shape1 = 1, shape = 1), 
         )
   
 ```
@@ -88,34 +98,38 @@ df |> ggplot(aes(x = resp_trunc)) +
   facet_grid(tonal~diff_dur)
 
 # distribution of `resp_beta`
-df |> ggplot(aes(x = resp_beta)) +
+df |> ggplot(aes(x = theta)) +
   geom_density(fill = "#381AB1", color = NA) +
   facet_grid(tonal~diff_dur)
 
 
 # plot
-df |> ggplot(aes(y = resp_beta,
-                 x = diff_dur,
-                 color = tonal)
+plot <- df |> 
+  group_by(tonal, diff_f0, diff_dur_c) |> 
+  summarise(mean_respons = mean(response_binomial)) |> 
+  ggplot(aes(y = mean_respons,
+                 x = diff_dur_c, color = tonal)
              ) +
-  geom_point(alpha = 0.1) + 
-  geom_smooth(method = "glm",
-              method.args = list(family = "binomial"),
-              linewidth = 3,
-              color = "white",
-              se = FALSE,
-              fullrange = TRUE) +
-  geom_smooth(method = "glm",
-              method.args = list(family = "binomial"),
-              linewidth = 1.5,
-              se = FALSE,
-              fullrange = TRUE) +
-  facet_wrap(~ tonal) +
+  geom_point(alpha = 0.5) + 
+  # geom_smooth(method = "glm",
+  #             method.args = list(family = "binomial"),
+  #             linewidth = 3,
+  #             color = "white",
+  #             se = FALSE,
+  #             fullrange = TRUE) +
+  # geom_smooth(method = "glm",
+  #             method.args = list(family = "binomial"),
+  #             linewidth = 1.5,
+  #             se = FALSE,
+  #             fullrange = TRUE) +
+  facet_wrap(~ tonal, ncol = 1) +
   scale_color_manual(values = c("#381AB1", "#25ACBE")) +
-  scale_x_continuous(limits = c(0,120)) +
+  scale_x_continuous(limits = c(-2.82827,1.7),
+                     breaks = c(-2.82827, -1.414, -0.707, 0, 0.707, 1.414),
+                     labels = c("0","40","60","80","100","120")) +
   scale_y_continuous(limits = c(0,1.0),
-                    breaks = c(0,0.5,1),
-                    labels = c("0Hz","45Hz","90Hz")) +
+                    breaks = c(0,1),
+                    labels = c("baseline","accurate\npitch\nperception")) +
   labs(x = "\nduration of f0 onset",
        y = "difference between perceived pitch and presented pitch in Hz\n") +
   theme_minimal() +
@@ -127,31 +141,90 @@ df |> ggplot(aes(y = resp_beta,
 
 ```{r model}
  
-## !! currently takes way too long (>10mins) on my machine to run, probably due to priors
+## !! simple mixture lapse
+## takes way too long (>200s) on my machine to run
 
-priors <- c(prior(normal(0,1), class = Intercept),
-            # weakly informative prior on SD and factor
-            prior(normal(0,0.5), class = b),
-            prior(normal(0,0.2), class = sd),
-            prior(gamma(4, 0.1), class = phi)
-            #prior(lkj(2), class = cor)
-            )
+BF <- bf(
+  response_binomial ~ guess + (1-guess-lapse) * inv_logit(eta),
+  eta ~ 1 + diff_dur_c,
+  guess ~ 1,
+  lapse ~ 1, 
+  family = bernoulli(link="identity"),
+  nl = TRUE
+) 
 
-test <- brm(resp_beta ~ diff_dur * as.factor(tonal.T) + (0 + diff_dur | subject),
-                  data = df, 
-             prior = priors,
-             # common sampling specifications
-             seed = 1234,
-             iter = 4000,
+
+p2 <- c(
+  prior(student_t(7, 0, 10), class = "b", nlpar = "eta"),
+  prior(beta(1, 1), nlpar = "lapse", lb = 0, ub = .1),
+  prior(beta(1, 1), nlpar = "guess", lb = 0, ub = .1)
+)
+
+fit_2 <- brm(BF,
+             data = df,
+             init = 0,
+             control = list(adapt_delta = 0.99),
+             prior = p2,
              chains = 4,
              cores = 4,
-             init = 0,
-             backend = "cmdstanr",
-             family = Beta)
+             #file  = "models/betareg_TR.RDS", 
+             backend = "cmdstanr")
 
-conditional_effects(test)
-pp_check(test)
-summary(test) # not sure why the CrIs are so large, ESS are also a bit low
+conditional_effects(fit_2)
+pp_check(fit_2)
+summary(fit_2) # lapse is correctly predicted
+
+# extract predicted values
+predicted_values <- fit_2 %>%
+  spread_draws(b_eta_Intercept, 
+               b_eta_diff_dur_c, 
+               b_guess_Intercept, 
+               b_lapse_Intercept) %>%
+  ### make a list of relevant value range of logRT
+  mutate(diff_dur = list(seq(-2, 2, 0.1))) %>% 
+  unnest(diff_dur) %>%
+  ### transform into proportion space using the plogis function
+  mutate(pred = b_guess_Intercept + (1-b_lapse_Intercept) * plogis(b_eta_Intercept + b_eta_diff_dur_c*diff_dur)) %>%
+  pivot_longer(cols = pred,
+               names_to = "factors") %>% 
+  group_by(diff_dur) %>%
+  summarise(pred_m = mean(value, na.rm = TRUE),
+            pred_0025 = quantile(value, prob = 0.025),
+            pred_0075 = quantile(value, prob = 0.075),
+            pred_025 = quantile(value, prob = 0.25),
+            pred_075 = quantile(value, prob = 0.75),
+            pred_0925 = quantile(value, prob = 0.925),
+            pred_0975 = quantile(value, prob = 0.975)) 
+
+ggplot(data = predicted_values, 
+         aes(x = diff_dur, 
+             y = pred_m)) +
+  geom_ribbon(aes(ymin = pred_0025, 
+                  ymax = pred_0975), 
+              alpha = 0.2,
+              fill = "grey") +
+  geom_ribbon(aes(ymin = pred_0075, 
+                    ymax = pred_0925), 
+                alpha = 0.4,
+                fill = "grey") +
+  geom_ribbon(aes(ymin = pred_025, 
+                    ymax = pred_075), 
+                alpha = 0.6,
+                fill = "grey") +
+  geom_line(size = 1.5, color = "#381AB1") +
+  geom_hline(yintercept = c(0,1), lty = "dashed") +
+  scale_color_manual(values = c("#381AB1", "#25ACBE")) +
+  scale_x_continuous(limits = c(-2.82827,1.7),
+                     breaks = c(-2.82827, -1.414, -0.707, 0, 0.707, 1.414),
+                     labels = c("0","40","60","80","100","120")) +
+  scale_y_continuous(limits = c(0,1.0),
+                    breaks = c(0,1),
+                    labels = c("baseline","accurate\npitch\nperception")) +
+  labs(x = "\nduration of f0 onset",
+       y = "difference between perceived pitch and presented pitch in Hz\n") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
 
 ```
 
