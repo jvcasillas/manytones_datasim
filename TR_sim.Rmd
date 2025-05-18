@@ -41,7 +41,7 @@ lapse <- .1     # upper bound
 subj_n <- 50    # number of subjects per language
 lang_n <- 4     # number of languages
 b0 <- -3        # intercept at zero onset duration large delta (1/2 of 90 Hz which is the max deviation)
-b1 <- 12        # fixed effect of diff_dur (for each ms, 1 less delta)
+b1 <- 6         # fixed effect of diff_dur (for each ms, 1 less delta)
 b2 <- 0         # fixed effect of tonal language, i.e. tonal languages are overall more accurate
 b3 <- 0.1         # interaction effect, tonal languages have a 20% stronger diff_dur (b1) effect
 u0s_sd <- 0.1      # random intercept SD for subjects
@@ -88,23 +88,24 @@ df <- add_random(subject = subj_n * lang_n) |>
 ```{r sanity_checks_plot}
 
 # distribution of `response`
-df |> ggplot(aes(x = response)) +
-  geom_density(fill = "#381AB1", color = NA) +
-  facet_grid(tonal~diff_dur)
-
-# distribution of `resp_trunc`
-df |> ggplot(aes(x = resp_trunc)) +
-  geom_density(fill = "#381AB1", color = NA) +
-  facet_grid(tonal~diff_dur)
+# df |> ggplot(aes(x = response)) +
+#   geom_density(fill = "#381AB1", color = NA) +
+#   facet_grid(tonal~diff_dur)
+# 
+# # distribution of `resp_trunc`
+# df |> ggplot(aes(x = resp_trunc)) +
+#   geom_density(fill = "#381AB1", color = NA) +
+#   facet_grid(tonal~diff_dur)
 
 # distribution of `resp_beta`
-df |> ggplot(aes(x = theta)) +
-  geom_density(fill = "#381AB1", color = NA) +
-  facet_grid(tonal~diff_dur)
+# df |> ggplot(aes(x = theta)) +
+#   geom_density(fill = "#381AB1", color = NA) +
+#   facet_grid(tonal~diff_dur)
 
 
 # plot
-plot <- df |> 
+#plot <- 
+  df |> 
   group_by(tonal, diff_f0, diff_dur_c) |> 
   summarise(mean_respons = mean(response_binomial)) |> 
   ggplot(aes(y = mean_respons,
@@ -160,7 +161,7 @@ p2 <- c(
   prior(beta(1, 1), nlpar = "guess", lb = 0, ub = .1)
 )
 
-fit_2 <- brm(BF,
+log_lapse <- brm(BF,
              data = df,
              init = 0,
              control = list(adapt_delta = 0.99),

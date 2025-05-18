@@ -75,7 +75,7 @@ hold <- brm(
            prior(lkj(1), class = 'cor') + 
            prior(student_t(3, 0, 37.1), class = 'sd') + 
            prior(student_t(3, 0, 37.1), class = 'sigma'),
-  sample_prior = "only", 
+  #sample_prior = "only", 
   data = dat
 )
 
