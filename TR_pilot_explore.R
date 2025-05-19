@@ -58,12 +58,12 @@ ggplot(data = xdata,
 
 ## Model
 # Trying a simple gam without constraints on shape
-priors_gam = c(prior(normal(0, 0.5), class = Intercept),
-               prior(normal(0, 1), class = b),
-               prior(student_t(3, 0, 2), class = sds),
-               prior(normal(0, 1), class = sigma))
+priors_gam = c(prior(normal(0, 0.3), class = Intercept),
+               prior(normal(0, 0.3), class = b),
+               prior(student_t(3, 0, 1), class = sds),
+               prior(normal(0, 0.3), class = sigma))
 
-xmdl_gam <- brm(response_f_prop ~ delta_f + s(delta_t, k = 4, by = delta_f),
+xmdl_gam <- brm(response_f_prop ~ delta_f_raw + s(delta_t, k = 5, by = delta_f_raw),
                 prior = priors_gam,
                 chains = 4,
                 cores = 4,
@@ -81,7 +81,7 @@ pp_check(xmdl_gam) # not too bad
 
 # prepare model predictions
 new <- expand.grid(delta_t = seq(40,120,5),
-                   delta_f = unique(xdata$delta_f))
+                   delta_f_raw = unique(xdata$delta_f_raw))
 
 new <- cbind(new, fitted(xmdl_gam, newdata = new))
 
@@ -89,23 +89,25 @@ new <- cbind(new, fitted(xmdl_gam, newdata = new))
 new |> 
 ggplot(aes(x = delta_t,
            y = Estimate,
-           color = delta_f)) + 
+           color = delta_f_raw)) + 
   geom_ribbon(aes(ymin = Q2.5, 
-                  ymax = Q97.5),
+                  ymax = Q97.5,
+                  group = delta_f_raw),
               fill = "grey",
               color = NA,
               alpha = 0.5) +
-  geom_line(lwd = 2) +
-  facet_grid(. ~ delta_f) + 
+  geom_line(aes(group = delta_f_raw),
+            lwd = 2) +
+  #facet_grid(. ~ delta_f_raw) + 
   # add a quick and dirty monotonic spline smooth (increasing & concave)
-  scale_y_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-1,1)) +
   theme_minimal()
 
-# they are rather off, assuming ordinal relationships
+# almost linear
 
 ## scam
 # using scam for monotonic splines?
-xmdl_mpi <- brm(response_f_prop ~ delta_f + s(delta_t, bs = "mpi", k = 4, by = delta_f),
+xmdl_mpi <- brm(response_f_prop ~ delta_f_raw + s(delta_t, bs = "mpi", k = 4, by = delta_f_raw),
                 prior = priors_gam,
                 chains = 4,
                 cores = 4,
@@ -117,7 +119,7 @@ xmdl_mpi <- brm(response_f_prop ~ delta_f + s(delta_t, bs = "mpi", k = 4, by = d
   
 # prepare model predictions
 new_mpi <- expand.grid(delta_t = seq(40,120,5),
-                       delta_f = unique(xdata$delta_f))
+                       delta_f = unique(xdata$delta_f_raw))
 
 # breaks down here "Error in X %*% object$diagRP : non-conformable arguments"
 new_mpi <- cbind(new_mpi, fitted(xmdl_mpi, newdata = new))
