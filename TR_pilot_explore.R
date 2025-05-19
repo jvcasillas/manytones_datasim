@@ -98,8 +98,6 @@ ggplot(aes(x = delta_t,
               alpha = 0.5) +
   geom_line(aes(group = delta_f_raw),
             lwd = 2) +
-  #facet_grid(. ~ delta_f_raw) + 
-  # add a quick and dirty monotonic spline smooth (increasing & concave)
   scale_y_continuous(limits = c(-1,1)) +
   theme_minimal()
 
@@ -113,7 +111,7 @@ xmdl_mpi <- brm(response_f_prop ~ delta_f_raw + s(delta_t, bs = "mpi", k = 4, by
                 cores = 4,
                 seed = 1234,
                 file  = "models/xmdl_mpi.RDS",  
-                control = list(adapt_delta = 0.9, max_treedepth = 13),
+                control = list(adapt_delta = 0.99, max_treedepth = 13),
                 backend = "cmdstanr",
                 data = xdata)
   
@@ -128,14 +126,14 @@ new_mpi <- cbind(new_mpi, fitted(xmdl_mpi, newdata = new))
 new_mpi |> 
   ggplot(aes(x = delta_t,
              y = Estimate,
-             color = delta_f)) + 
+             color = delta_f_raw)) + 
   geom_ribbon(aes(ymin = Q2.5, 
-                  ymax = Q97.5),
+                  ymax = Q97.5,
+                  group = delta_f_raw),
               fill = "grey",
               color = NA,
               alpha = 0.5) +
-  geom_line(lwd = 2) +
-  facet_grid(. ~ delta_f) + 
-  # add a quick and dirty monotonic spline smooth (increasing & concave)
-  scale_y_continuous(limits = c(0,1)) +
+  geom_line(aes(group = delta_f_raw),
+            lwd = 2) +
+  scale_y_continuous(limits = c(-1,1)) +
   theme_minimal()
