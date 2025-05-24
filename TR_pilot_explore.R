@@ -34,7 +34,7 @@ xdata <- xdata |>
 ## Visualize
 
 xdata_agg <- xdata |> 
-  group_by(delta_f, delta_t, participant, stimuli_type) |> 
+  group_by(delta_f_raw, delta_t, participant, stimuli_type) |> 
   summarise(response_f_prop = mean(response_f_prop, na.rm = TRUE))
   
 
@@ -42,16 +42,21 @@ xdata_agg <- xdata |>
 ggplot(data = xdata, 
        aes(x = delta_t,
            y = response_f_prop,
-           color = delta_f)) + 
+           color = delta_f_raw)) + 
   geom_jitter(data = xdata_agg,
               width = 0.1,
               height = 0.1,
               alpha = 0.2) +
-  facet_grid(. ~ delta_f) + 
+  facet_grid(. ~ delta_f_raw) + 
   # add a quick and dirty monotonic spline smooth (increasing)
-  geom_smooth(method = "scam",
+  geom_smooth(data = xdata |> filter(delta_f_raw > 0),
+              method = "scam",
               lwd = 2,
               formula = y ~ s(x, k = 5, bs = "mpi")) +
+  geom_smooth(data = xdata |> filter(delta_f_raw < 0),
+              method = "scam",
+              lwd = 2,
+              formula = y ~ s(x, k = 5, bs = "mpd")) +
   scale_y_continuous(limits = c(-0.5,1)) +
   theme_minimal()
 
