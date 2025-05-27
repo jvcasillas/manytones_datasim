@@ -1,6 +1,6 @@
 ## Title: Exploring ManyTones Pilot Data
 ## Description: Exploring patterns and modelling attempts with GAMs
-## Authors: Roettger
+## Authors: Timo B. Roettger
 ## Date: 18th May 2025
 
 ## Set up
@@ -16,19 +16,21 @@ setwd(current_working_dir)
 # Load pilot data
 xdata <- read_csv("data/merged_results.csv")
 
-
 ## Wrangle 
 
-# Change variables
+# Change variables to few variations
 xdata <- xdata |> 
   filter(stimuli_direction != 0) |> 
          # make delta_f positive / negative
   mutate(delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
-         # make response_f_rel relative to baseline 150hz      
+         # make response_f relative to baseline 150hz      
          response_f_rel = response_f - 150,
+         # make response_f absolute without sign differences
+         response_f_rel_abs = abs(response_f_rel),
          # relative to target
          response_f_prop = response_f_rel / delta_f,
-         presented_f = 150+delta_f_raw
+         # calculate actual f0 of presented tone onset
+         presented_f = 150 + delta_f_raw
          )
 
 
@@ -42,13 +44,13 @@ xdata_agg <- xdata |>
 # Plot perceived f0 relative to presented f0
 ggplot(data = xdata, 
        aes(x = delta_t,
-           y = response_f,
-           color = delta_f_raw)) + 
-  geom_jitter(data = xdata_agg,
-              width = 1,
-              height = 1,
-              alpha = 0.2) +
-  facet_grid(. ~ delta_f_raw) + 
+           y = response_f_rel_abs,
+           color = delta_f)) + 
+  # geom_jitter(data = xdata_agg,
+  #             width = 1,
+  #             height = 1,
+  #             alpha = 0.2) +
+  facet_grid(. ~ delta_f) + 
   # add a quick and dirty monotonic spline smooth (increasing)
   geom_smooth(data = xdata ,
               method = "gam",
@@ -113,7 +115,6 @@ ggplot(aes(x = delta_t,
               alpha = 0.5) +
   geom_line(aes(group = delta_f_raw),
             lwd = 1) +
-
   scale_color_viridis() +
   scale_y_continuous(breaks = unique(xdata$presented_f)) +
   theme_minimal()
@@ -143,20 +144,4 @@ new_mpi <- expand.grid(delta_t = seq(40,120,5),
 new_mpi <- cbind(new_mpi, fitted(xmdl_mpi, newdata = new_mpi))
 # breaks down here "Error in object$m + 1 : non-numeric argument to binary operator"
 new_mpi <- cbind(new_mpi, Predict.matrix.mpi.smooth(xmdl_mpi, data = new_mpi))
-
-# plot model predictions
-new_mpi |> 
-  ggplot(aes(x = delta_t,
-             y = Estimate,
-             color = delta_f_raw)) + 
-  geom_ribbon(aes(ymin = Q2.5, 
-                  ymax = Q97.5,
-                  group = delta_f_raw),
-              fill = "grey",
-              color = NA,
-              alpha = 0.5) +
-  geom_line(aes(group = delta_f_raw),
-            lwd = 2) +
-  scale_y_continuous(limits = c(-1,1)) +
-  theme_minimal()
 
