@@ -29,7 +29,7 @@ xdata <- xdata |>
          response_f_rel_abs = abs(response_f_rel),
          # relative to target
          response_f_prop = response_f_rel / delta_f,
-         # calculate actual f0 of presented tone onset
+         # calculate actual f0 of presented tonal onset
          presented_f = 150 + delta_f_raw
          )
 
@@ -38,19 +38,19 @@ xdata <- xdata |>
 
 xdata_agg <- xdata |> 
   group_by(delta_f_raw, delta_t, participant, stimuli_type) |> 
-  summarise(response_f = mean(response_f, na.rm = TRUE))
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
   
 
 # Plot perceived f0 relative to presented f0
 ggplot(data = xdata, 
        aes(x = delta_t,
-           y = response_f_rel_abs,
-           color = delta_f)) + 
-  # geom_jitter(data = xdata_agg,
-  #             width = 1,
-  #             height = 1,
-  #             alpha = 0.2) +
-  facet_grid(. ~ delta_f) + 
+           y = response_f_rel,
+           color = delta_f_raw)) + 
+  geom_jitter(data = xdata_agg,
+              width = 1,
+              height = 1,
+              alpha = 0.2) +
+  facet_grid(. ~ delta_f_raw) + 
   # add a quick and dirty monotonic spline smooth (increasing)
   geom_smooth(data = xdata ,
               method = "gam",
@@ -86,9 +86,10 @@ xmdl_gam <- brm(response_f ~ delta_f_raw + s(delta_t, k = 5, by = delta_f_raw),
 
 # quick and dirty look
 conditional_effects(xmdl_gam)
+# look as expected
 
 # pp_check()
-pp_check(xmdl_gam) # not too bad - symmetric and unimodal
+pp_check(xmdl_gam) # not too bad - symmetric and "unimodal", but due to response categories not smooth
 
 # prepare model predictions
 new <- expand.grid(delta_t = seq(40,120,5),
@@ -101,8 +102,7 @@ new |>
 ggplot(aes(x = delta_t,
            y = Estimate,
            color = delta_f_raw)) + 
-  geom_hline(data = xdata,
-             yintercept = unique(xdata$presented_f),
+  geom_hline(yintercept = unique(xdata$presented_f),
              col = c("#55AA84", "#79C66E", "#3F5187", "#FAD155",
                      "#3F718B", "#432E77",  "#B5DB54", "#3F1250"),
              lty = "dashed",
@@ -119,14 +119,14 @@ ggplot(aes(x = delta_t,
   scale_y_continuous(breaks = unique(xdata$presented_f)) +
   theme_minimal()
 
-# almost linear
+# almost linear with a slight bend towards asymptote 
 
 ## scam
 
-# run predict-mpi.r before trying to predict
+# please run predict-mpi.r before trying to predict
 
 # using scam for monotonic splines?
-xmdl_mpi <- brm(response_f_prop ~ delta_f_raw + s(delta_t, bs = "mpi", k = 4, by = delta_f_raw),
+xmdl_mpi <- brm(response_f_prop_abs ~ delta_f + s(delta_t, bs = "mpi", k = 4, by = delta_f),
                 prior = priors_gam,
                 chains = 4,
                 cores = 4,
@@ -138,7 +138,7 @@ xmdl_mpi <- brm(response_f_prop ~ delta_f_raw + s(delta_t, bs = "mpi", k = 4, by
   
 # prepare model predictions
 new_mpi <- expand.grid(delta_t = seq(40,120,5),
-                       delta_f_raw = unique(xdata$delta_f_raw))
+                       delta_f = unique(xdata$delta_f))
 
 # breaks down here "Error in X %*% object$diagRP : non-conformable arguments"
 new_mpi <- cbind(new_mpi, fitted(xmdl_mpi, newdata = new_mpi))

@@ -46,22 +46,23 @@ xdata$pred <- preds
 # Plot predicted data
 # 
 xdata_agg <- xdata |> 
-  group_by(delta_f, delta_t, participant, stimuli_type) |> 
+  group_by(delta_f_raw, delta_t, participant, stimuli_type) |> 
   summarise(pred = mean(pred, na.rm = TRUE))
 
 ggplot(data = xdata, 
        aes(x = delta_t,
            y = pred,
-           color = delta_f)) + 
-  geom_jitter(data = xdata_agg,
+           color = delta_f_raw)) + 
+  geom_point(data = xdata_agg,
               width = 0.1,
               height = 0.1,
               alpha = 0.2) +
-  facet_grid(. ~ delta_f) + 
+  geom_line(aes(group = delta_f_raw)) +
+  #facet_wrap(. ~ delta_f_raw, nrow = 2) + 
   # add a quick and dirty monotonic spline smooth (increasing)
-  geom_smooth(method = "scam",
-              lwd = 2,
-              formula = y ~ s(x, k = 5, bs = "mpi")) +
+  # geom_smooth(method = "scam",
+  #             lwd = 2,
+  #             formula = y ~ s(x, k = 5, bs = "mpi")) +
   scale_y_continuous(limits = c(-0.5,1)) +
   theme_minimal()
 
