@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE,
 # nifty code using the pacman package
 # it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, tidybayes, tidyr, dplyr, truncnorm, lme4, faux)
+pacman::p_load(tidyverse, brms, tidybayes, truncnorm, lme4, faux)
 
 # set the current working directory to the one where this file is
 current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
@@ -171,12 +171,12 @@ log_lapse <- brm(BF,
              #file  = "models/betareg_TR.RDS", 
              backend = "cmdstanr")
 
-conditional_effects(fit_2)
-pp_check(fit_2)
-summary(fit_2) # lapse is correctly predicted
+conditional_effects(log_lapse)
+pp_check(log_lapse)
+summary(log_lapse) # lapse is correctly predicted
 
 # extract predicted values
-predicted_values <- fit_2 %>%
+predicted_values <- log_lapse %>%
   spread_draws(b_eta_Intercept, 
                b_eta_diff_dur_c, 
                b_guess_Intercept, 
