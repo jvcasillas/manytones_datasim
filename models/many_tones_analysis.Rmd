@@ -1,0 +1,132 @@
+---
+title: "ManyTones analysis"
+author: "Márton Sóskuthy"
+date: "2025-07-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries & Data
+
+```{r}
+library(tidyverse)
+library(brms)
+
+mt_baseline_1 <- tibble(
+  target=rep(c(70,100,110,130,140,190), each=5),
+  slope_dur=rep(c(40,60,100,150,250), times=6),
+  val=c(119,118,110,99,90,
+        120,119,117,114,108,
+        121,119,118.5,117.5,116,
+        122,122.5,125,127,128,
+        123,127,129,132.5,135,
+        134,136,147,156,165)
+)
+mt_baseline_2 <- tibble(
+  target=rep(c(70,100,110,130,140,190), each=5),
+  slope_dur=rep(c(40,60,100,150,250), times=6),
+  val=c(113,101,90,85,81,
+        117,114,108,105.5,106,
+        119,118,113,112,111,
+        121,124,126,129,128,
+        125,130,133,134.5,135.5,
+        155,167,168,174,176)
+)
+
+```
+
+## Viz
+
+```{r}
+ggplot(mt_baseline_1, aes(x=slope_dur, y=val, col=target)) +
+  geom_line(aes(group=target))
+ggplot(mt_baseline_2, aes(x=slope_dur, y=val, col=target)) +
+  geom_line(aes(group=target))
+
+ggplot(mt_actual, aes(x=delta_t, y=response_f, col=delta_f)) +
+  facet_wrap(~participant + stimuli_type) +
+  geom_smooth(aes(group=delta_f), method="lm", se=F)
+  
+```
+
+## Mod
+
+```{r}
+mt_baseline_1 <- mutate(mt_baseline_1,
+  #x_min=min(slope_dur),
+  x_max=max(slope_dur)
+)
+
+# look at gumbel function?
+# Naka-rushton?
+# model of the following basic structure:
+# y ~ a + b*x^c
+
+#mt_actual <- mt_actual %>%
+#  mutate(val_tr =  )
+bl_mod <- brm(
+  bf(val ~ a + b*(( (slope_dur - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ target,
+     c ~ target,
+     x0 ~ 1,
+     nl=T),
+  data=mt_baseline_1,
+  prior=prior(normal(0,100), nlpar="a")+
+        prior(normal(0,100), nlpar="b")+
+        prior(normal(0,100), nlpar="x0")+
+        prior(normal(0,1), nlpar="c", lb=0, ub=1),
+  control=list(adapt_delta=0.99))
+
+mt_baseline_1$preds <- posterior_summary(posterior_epred(bl_mod))[,1]
+
+#ggplot(mt_baseline_1, aes(x=slope_dur, y=val, col=target)) +
+#  geom_line(aes(group=target))
+mt_baseline_1 %>%
+  pivot_longer(c("preds", "val"), names_to="type", values_to="value") %>%
+  mutate(type=factor(type, levels=c("val", "preds"))) %>%
+ggplot(aes(x=slope_dur, y=value, col=target)) +
+  facet_grid(.~type) +
+  geom_line(aes(group=target, lty=type))
+```
+
+```{r}
+# this one doesn't quite converge...
+# looks like a good fit, though!
+
+mt_baseline_2 <- mutate(mt_baseline_2,
+  x_max=max(slope_dur)
+)
+
+#mt_actual <- mt_actual %>%
+#  mutate(val_tr =  )
+bl2_mod <- brm(
+  bf(val ~ a + b*(( (slope_dur - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ target,
+     c ~ target,
+     x0 ~ 1,
+     nl=T),
+  data=mt_baseline_2,
+  prior=prior(normal(0,100), nlpar="a")+
+        prior(normal(0,100), nlpar="b")+
+        prior(normal(0,1), nlpar="c")+
+        prior(normal(0,100), nlpar="x0"),
+  control=list(adapt_delta=0.99))
+
+mt_baseline_2$preds <- posterior_summary(posterior_epred(bl2_mod))[,1]
+
+#ggplot(mt_baseline_1, aes(x=slope_dur, y=val, col=target)) +
+#  geom_line(aes(group=target))
+mt_baseline_2 %>%
+  pivot_longer(c("preds", "val"), names_to="type", values_to="value") %>%
+  mutate(type=factor(type, levels=c("val", "preds"))) %>%
+ggplot(aes(x=slope_dur, y=value, col=target)) +
+  facet_grid(.~type) +
+  geom_line(aes(group=target, lty=type))
+```
+
+
