@@ -1,5 +1,5 @@
 ## Title: Exploring ManyTones Pilot Data
-## Description: Exploring patterns and modelling attempts with GAMs
+## Description: Exploring patterns and modelling attempts with GAMs/scams
 ## Authors: Timo B. Roettger
 ## Date: 18th May 2025
 
@@ -14,7 +14,7 @@ current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
 setwd(current_working_dir)
 
 # Load pilot data
-xdata <- read_csv("data/merged_results.csv")
+xdata <- read_csv("../data/merged_results.csv")
 
 ## Wrangle 
 
@@ -79,7 +79,7 @@ xmdl_gam <- brm(response_f ~ delta_f_raw + s(delta_t, k = 5, by = delta_f_raw),
                 chains = 4,
                 cores = 4,
                 seed = 1234,
-                file  = "models/xmdl_gam.RDS",  
+                file  = "../models/xmdl_gam.RDS",  
                 control = list(adapt_delta = 0.9, max_treedepth = 13),
                 backend = "cmdstanr",
                 data = xdata)
