@@ -195,6 +195,16 @@ data_v_model
 
 ```
 
+Now we could relate these functions to a reliable perceptual difference dependent on what JND we want to use.
+
+Goal would be to find an inferential criterion that assesses how much evidence we have for above JND performance for each parameter combination.
+
+```{r}
+
+JND = c(-3,3)
+
+```
+
 # Accuracy of pitch direction
 
 ## Verbal predictions
@@ -301,7 +311,7 @@ ggplot(data = xdata,
  
 ```
 
-Now we can relate these functions to a reliable perceptual difference (above 50%).
+Now we could relate these functions to a reliable perceptual difference (above 50%).
 
 Goal would be to find an inferential criterion that assesses how much evidence we have for above JND performance for each parameter combination.
 
