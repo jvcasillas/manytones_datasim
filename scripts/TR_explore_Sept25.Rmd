@@ -1,0 +1,312 @@
+---
+title: "ManyTones analysis"
+author: "Timo Roettger"
+date: "2025-07-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, patchwork, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam)
+
+# Set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+## Data
+
+```{r}
+
+# load in data 2025/09/11
+xdata <- read_csv("../data/merged_250911.csv")
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  # include trials when slider was not moved?
+  #filter(stimuli_direction != 0) |>
+  filter(delta_t != 0) |> 
+  # make delta_f positive / negative
+  mutate(delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # make response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # make response_f absolute without sign differences
+         response_f_rel_abs = abs(response_f_rel),
+         # relative to target
+         response_f_prop = response_f_rel / delta_f,
+         # calculate actual f0 of presented tonal onset
+         presented_f = 150 + delta_f_raw,
+         # make is.correct numeric
+         correct = as.numeric(is_correct)
+         )
+
+```
+
+# Continuous dependent variable
+
+## Verbal predictions
+
+(1) The duration of the f0 slope affects perceived pitch such that longer duration lead to perceived pitch that is closer to the presented f0 onset.
+
+(2) The difference between the f0 onset and the level tone affects perceived pitch such that larger differences lead to larger perceived pitch differences.
+
+Visually assess relationship between slope duration (delta_t), f0 difference between onset and level tone (delta_f_raw) and response.
+
+```{r}
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+descriptive_plot_01 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  geom_line(data = xdata_agg, 
+            aes(group = interaction(participant, delta_f_raw)),
+          alpha = 0.2) +
+  geom_point(data = xdata_agg_all) +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2) +
+  scale_y_continuous(limits = c(-40,30),
+                     breaks = seq(-40,30,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis(option="viridis") +
+  theme_minimal()
+  
+descriptive_plot_01
+
+```
+
+Slight non-linear trajectory, but predictions are descriptively confirmed.
+
+## Statistical model
+
+Hypotheses are tested, and relevant parameters are estimated through the following model (following Marton's parametric suggestion)
+
+`response_f_rel \~ a + b \* (( (delta_t - x0) / (x_max - x0) )\^inv_logit(c))`
+
+a = assesses intercept, i.e. perceived pitch differences at `delta_t = 0` and `delta_f_raw = 0`
+
+b = assesses linear relationship of `delta_t` and `response_f_rel` and how this relationship is modulated by `delta_f_raw`
+
+c = delta_f_raw \# assess non-linear relationship of `delta_t` and `response_f_rel` and how this relationship is modulated by `delta_f_raw`
+
+x0 \# ?
+
+## Statistical hypotheses
+
+(1) `delta_t` linearly affects `response_f_rel`, i.e. there is evidence of `b_intercept > 0`, over `b_intercept = 0`.
+
+(2) `delta_f_raw` linearly affects the relationship in (1), i.e. there is evidence of `b_delta_f_raw > 0`, over `b_delta_f_raw = 0`.
+
+## Further exploratory parameter estimation
+
+(3) ...
+
+```{r}
+
+# add ceiling
+xdata <- xdata |> 
+  mutate(
+  #x_min=min(delta_t),
+  x_max = max(delta_t)
+)
+
+# TO DO: Explore other functions
+## gumbel function?
+## Naka-rushton?
+
+# Model of the following basic structure:
+# y ~ a + b*x^
+
+# TO DO: Justify priors
+# TO DO: random slopes for all these parameters? Computationally feasible?
+# TO DO: inferential procedure? Savage Dickey-based BF against point zero?
+
+# run model
+parametric_model <- brm(
+  bf(response_f_rel ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
+     x0 ~ 1,
+     nl = T),
+  data = xdata,
+  file = "../models/model_nl_TR",
+  prior = prior(normal(0,100), nlpar = "a")+
+          prior(normal(0,100), nlpar = "b")+
+          prior(normal(0,100), nlpar = "x0")+
+          prior(normal(0,1), nlpar = "c", lb = 0, ub = 1),
+  control = list(adapt_delta=0.99)
+  )
+
+# comment TR: takes 90 seconds on my machine, so computationally expensive
+parametric_model
+# model predicts mostly linear relationship
+
+# posterior predictive check
+pp_check(parametric_model)
+# 1. not truly continuous measure, problem?
+# 2. regardless, distribution looks spikier than gaussian
+
+# check chains
+plot(parametric_model, pars = "^b_") # okay
+
+xdata$preds <- posterior_summary(posterior_epred(parametric_model))[,1]
+
+# Visualize
+model_plot_01 <- 
+ggplot(data = xdata, 
+       aes(x = delta_t,
+           y = preds,
+           color = delta_f_raw,
+           group = delta_f_raw)) +
+  geom_line(lwd = 2.5, color = "black") +
+  geom_line(lwd = 2) +
+  scale_y_continuous(limits = c(-40,30),
+                     breaks = seq(-40,30,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis(option="viridis") +
+  theme_minimal()
+  
+model_plot_01
+
+data_v_model <- descriptive_plot_01 + model_plot_01
+data_v_model
+
+# pretty decent fit, but asymmetries between positive and negative delta_f are not captured
+
+```
+
+# Accuracy of pitch direction
+
+## Verbal predictions
+
+(1) Directional perception can be reliably perceived for some combination of slope duration and pitch difference between the f0 onset and the level tone.
+
+Question: What to do with those trials that are neither higher or lower but chosen to be level? Options: (1) categorical GLM with three response options (2) remove "m"s, and run logistic regression or (3) consider "m"s incorrect, and run logistic regression (currently implemented)
+
+```{r}
+
+xdata_agg_all <- xdata |> 
+  group_by(delta_f, delta_t, stimuli_direction) |> 
+  summarise(correct = mean(correct, na.rm = TRUE))
+  
+# Plot empirical accuracy
+#bare_plot <- 
+  ggplot(data = xdata_agg_all, 
+       aes(x = delta_f,
+           y = correct,
+           color = stimuli_direction)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_path(lwd = 2) +
+  #scale_color_viridis(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(breaks = seq(-40,40,20)) +
+  facet_wrap(delta_t ~ ., ncol = 3) +
+  theme_minimal()
+  
+# asymmetric effects of positive vs. negative delta_f:
+  # negative: stable >75% accuracy regardless of delta_f and delta_t
+  # positive: increases with delta_f and delta_t
+
+```
+
+## Statistical model
+
+Hypotheses are tested, and relevant parameters are estimated through the following model:
+
+`correct ~ delta_t * delta_f * direction`
+
+## Statistical hypotheses
+
+(1) 
+
+(2) 
+
+## Further exploratory parameter estimation
+
+(3) ...
+
+```{r}
+
+# contrast code
+xdata <- xdata |> 
+  mutate(delta_f_c = delta_f - mean(delta_f),
+         delta_t_c = delta_t - mean(delta_t),
+         stimuli_direction_c = ifelse(stimuli_direction == "p", 0.5, -0.5))
+
+# formula
+formula = bf(correct ~ delta_f_c * delta_t_c * stimuli_direction_c)
+
+# run model
+logistic_model <- brm(
+  formula,
+  data = xdata,
+  file = "../models/model_glm_TR",
+  family = "bernoulli",
+  prior = prior(normal(0,1), class = "b"), 
+  control = list(adapt_delta=0.99)
+  )
+
+# comment TR: takes 50 seconds on my machine, so computationally expensive and 500 convergence
+logistic_model
+# model predicts mostly linear relationship
+
+# posterior predictive check
+pp_check(logistic_model)
+
+# check chains
+plot(logistic_model, variable = "^b_") # okay
+
+xdata$preds_glm <- posterior_summary(posterior_epred(logistic_model))[,1]
+
+# plot
+ggplot(data = xdata, 
+       aes(x = delta_f,
+           y = preds_glm,
+           color = stimuli_direction)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  # geom_ribbon(aes(ymin = lci, 
+  #                 ymax = hci),
+  #             #color = "grey",
+  #             fill = "lightgrey") +
+  geom_path(lwd = 2) +
+  #scale_color_viridis(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(breaks = seq(0,40,20)) +
+  facet_wrap(delta_t ~ ., ncol = 3) +
+  theme_minimal()
+ 
+```
+
+Now we can relate these functions to a reliable perceptual difference (above 50%).
+
+Goal would be to find an inferential criterion that assesses how much evidence we have for above JND performance for each parameter combination.
+
+```{r}
+
+JND = c(-3,3)
+
+```
