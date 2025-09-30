@@ -184,11 +184,11 @@ logistic_model <- brm(
                  max_treedepth = 12)
   )
 
+
 # comment TR: with interacting predictors in random slopes, computationally rather expensive (~15 mins)
 print(logistic_model, digits = 5)
 
 plot(logistic_model, variables = "^b_") # okay
-
 
 # extract posteriors
 posteriors <- logistic_model |> 
@@ -229,6 +229,14 @@ posteriors <- logistic_model |>
   geom_line(#aes(colour = above_chance),
             colour = "black",
             lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = correct),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = correct, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
   scale_color_manual(values = c("black", "darkred")) +
   scale_fill_viridis_d(option="viridis") +
   scale_y_continuous(limits = c(0,1),
@@ -236,11 +244,330 @@ posteriors <- logistic_model |>
   scale_x_continuous(limits = c(40,250),
                      breaks = c(40,80,120,250)) +
   facet_wrap( ~ delta_f, ncol = 2) +
-  labs(x = "\nslope duraction in ms",
+  labs(x = "\nslope duration in ms",
        y = "posterior predictions for\nperceptual accuracy of pitch direction\n",
        fill = "delta f0\n") +
   guides(color = "none") +
   theme_minimal()
+
+```
+
+### Florian's Lapse model
+
+```{r}
+
+# Florians suggestion:
+ # estimate guess
+formula_FJ = bf(correct ~ guess + (1 -  guess - inv_logit(lambda)) * inv_logit(eta),
+             # set guess rate to 1/3
+             guess ~ 0 + offset(1/3),
+             lambda ~ 1,
+             eta ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant),
+             family = bernoulli(link="identity"),
+             nl = TRUE)
+
+logistic_model_lapse <- brm(
+  formula_FJ,
+  data = xdata,
+  #family = bernoulli(link='identity'),
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(
+  prior(student_t(3, 0, 2.5), class = "b", nlpar = "eta"),
+  prior(lkj(1), class = "cor"),
+  prior(student_t(3, 0, 2.5), class = "sd", nlpar = "eta"),
+  # Setting intercept prior to weakly regularizing around 5% lapses)
+  prior(student_t(3, -2.944439, 2.5), class = "b", coef = "Intercept", nlpar = "lambda")),
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+logistic_model_lapse |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(#aes(colour = above_chance),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = correct),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = correct, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nperceptual accuracy of pitch direction\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal()
+
+```
+
+### Logistic of no direction response
+
+```{r}
+
+# Florian: Any chance that you could run a standard mixed-effects logistic regression but with response = “no direction”? I think that will shed light on the concern that I’m hinting at in my previous email. I predict that they are never below chance in terms of the direction. But they have a certain held-out prob mass for “no direction”, and that prob mass decreases for longer slope and bigger differences. So it’s a mixture model: respond “no direction” unless there is sufficient perceptual evidence of directionality; once there is respond based on perceptual evidence about that directionality.
+
+xdata <- xdata |> 
+  mutate(no_direction = ifelse(response_direction_corrected == "m", 1, 0))
+
+xdata_agg_all <- xdata |> 
+  group_by(delta_f, delta_t) |> 
+  summarise(no_direction = mean(no_direction, na.rm = TRUE))
+
+# formula
+formula_no = bf(no_direction ~ delta_t_c * delta_f_c + (delta_t_c * delta_f_c | participant))
+
+# run model
+logistic_model_no_direction <- brm(
+  formula_no,
+  data = xdata,
+  file = "../models/model_glm_no_direction_TR",
+  family = "bernoulli",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,0.5), class = "Intercept"),
+            prior(normal(0,0.1), class = "b"),
+            prior(lkj(1), class = "cor"),
+            prior(normal(0,1), class = "sd")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 12)
+  )
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+logistic_model_no_direction |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(#aes(colour = above_chance),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = no_direction),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = no_direction, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability for no direction\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal()
+
+```
+
+### Multinomial model
+
+```{r}
+
+# fit model to ternary response
+xdata_agg_viz <- xdata |> 
+  mutate(response_direction_corrected = as.factor(response_direction_corrected)) |> 
+  group_by(delta_f, delta_t,response_direction_corrected) |> 
+  count() |> 
+  group_by(delta_f, delta_t) |> 
+  mutate(pred_m = n/sum(n),
+         ".category" = response_direction_corrected) 
+
+
+# formula
+formula_cat = bf(response_direction_corrected ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+
+# run model (takes 20mins)
+multinomial_model <- brm(
+  formula_cat,
+  data = xdata,
+  file = "../models/model_glm_cat_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,0.3), class = "b", dpar = "mul"),
+            prior(normal(0,0.3), class = "b", dpar = "mum"),
+            prior(lkj(1), class = "cor")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 12)
+  )
+
+# model convergence?
+plot(multinomial_model, variables = "^b_") # okay
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+multinomial_model |> 
+    epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c, .category) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f),
+           group = .category)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(aes(),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_viz,
+             size = 3) + 
+  geom_point(data = xdata_agg_viz,
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_grid(.category ~ delta_f) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability of different responses\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal() +
+  theme(strip.text.y = element_text(angle = 0))
+
+```
+
+### Multinomial model with correct/incorrect and middle
+
+```{r}
+
+xdata <- xdata |> 
+  mutate(correct_m = ifelse(response_direction_corrected == "m", "no direction", 
+         ifelse(correct == 1, "correct", "incorrect")))
+
+
+# fit model to ternary response
+xdata_agg_viz <- xdata |> 
+  mutate(correct_m = as.factor(correct_m)) |> 
+  group_by(delta_f, delta_t,correct_m) |> 
+  count() |> 
+  group_by(delta_f, delta_t) |> 
+  mutate(pred_m = n/sum(n),
+         ".category" = correct_m) 
+
+
+# formula
+formula_cat_2 = bf(correct_m ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+
+# run model (takes 20mins)
+multinomial_model <- brm(
+  formula_cat_2,
+  data = xdata,
+  file = "../models/model_glm_cat2_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,1), class = "b", dpar = "muincorrect"),
+            prior(normal(0,1), class = "b", dpar = "munodirection"),
+            prior(lkj(1), class = "cor"),
+            prior(normal(0,1), class = "sd", dpar = "muincorrect"),
+            prior(normal(0,1), class = "sd", dpar = "munodirection")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 10)
+  )
+
+# model convergence?
+plot(multinomial_model, variables = "^b_") # okay
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+multinomial_model |> 
+    epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c, .category) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f),
+           group = .category)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(aes(),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_viz,
+             size = 3) + 
+  geom_point(data = xdata_agg_viz,
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_grid(.category ~ delta_f) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability of different responses\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal() +
+  theme(strip.text.y = element_text(angle = 0))
 
 ```
 
@@ -259,11 +586,10 @@ bayesfactor_pointnull(posterior = logistic_model,
 
 ```
 
-
 ### Questions:
 
 -   What to do with those trials that are neither higher or lower but chosen to be level? Options: (1) categorical GLM with three response options (2) remove level responses, and run logistic regression or (3) consider level responses incorrect, and run logistic regression (currently implemented).
--   Can we test against anything meaningful that is not point-zero in this case? 
+-   Can we test against anything meaningful that is not point-zero in this case?
 
 # Continuous dependent variable
 
@@ -328,10 +654,9 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 
 ```
 
-
 ## Statistical model
 
-Relevant parameters are estimated through the following model (following Marton's parametric suggestion) # need justification for our model choice
+Relevant parameters are estimated through the following model (following Marton's parametric suggestion) \# need justification for our model choice
 
 `response_f_rel_st \~ a + b \* (( (delta_t - x0) / (x_max - x0) )\^inv_logit(c))`
 
@@ -342,7 +667,6 @@ b = assesses linear relationship of `delta_t` and `response_f_rel_st` and how th
 c = delta_f_raw_st \# assess non-linear relationship of `delta_t` and `response_f_rel_st` and how this relationship is modulated by `delta_f_raw_st`
 
 x0 \# ?
-
 
 ```{r}
 
