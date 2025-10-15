@@ -1,0 +1,372 @@
+---
+title: "simple_fodel_4_sample_size_just"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux)
+
+# Set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Data & Wrangling
+
+```{r data_wrangling}
+
+# load in data 2025/09/11
+xdata <- read_csv("../data/merged_250911.csv")
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  filter(delta_t != 0) |> 
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         delta_f_raw_abs = abs(delta_f_raw),
+         delta_f_raw_abs_c = delta_f_raw_abs - mean(delta_f_raw_abs),
+         # make delta_f_raw into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
+         # make response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # adjust response direction for absolute delta_f values
+         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
+         # make response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
+         # proportional response
+         response_f_prop = response_f_rel_st / delta_f_raw_st,
+         # make part ID a char
+         participant = as.character(participant)
+         )
+
+```
+
+# Descriptive
+
+```{r descriptive}
+
+#Factorial comparisons: 
+#1. delta_f = 10 vs 40
+#2. delta_t = 40 vs. 120
+
+# difference?
+xagg <- xdata |> 
+  #exclude delta_t = 250
+  filter(delta_t %in% c(40,60,80,100,120)) |>
+  group_by(delta_t, delta_f_raw) |> 
+  summarise(mean_raw = mean(response_f_rel_sign, na.rm = TRUE))
+xagg
+
+xagg |> 
+  filter(delta_t %in% c(40,120),
+         delta_f == 40) |>
+  group_by(delta_t) |> 
+  summarise(mean_raw = mean(mean_raw, na.rm = TRUE)) 
+
+# delta_t = 40-120: ~ 3.6 Hz 
+
+xagg |> 
+  filter(delta_f %in% c(10,40)) |>
+  group_by(delta_f) |> 
+  summarise(mean_raw = mean(mean_raw, na.rm = TRUE)) 
+
+# delta_f = 10-40: ~ 3.7 Hz 
+
+```
+
+# Simple model
+
+```{r model}
+
+xdata_reduced_1 <-  xdata |> 
+  filter(delta_t %in% c(40),
+         delta_f_raw %in% c(-20,20)) |>
+  mutate(delta_f_raw = as.factor(delta_f_raw))
+
+xdata_reduced_2 <-  xdata |> 
+  filter(delta_f %in% c(10,40)) |>
+  mutate(delta_f = as.factor(delta_f))
+
+# contrast-code
+contrasts(xdata_reduced_1$delta_f_raw) <- c(-.5,.5)
+contrasts(xdata_reduced_2$delta_f) <- c(-.5,.5)
+
+# formulas
+formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f | participant))
+formula_d_f0 = bf(response_f_rel_sign ~ 1 + (1 | participant))
+
+formula_d_t = bf(response_f_rel_sign ~ delta_t + (delta_t | participant))
+
+# my priors (regularizing for beta and sd, lkj(2) for cor)
+mypriors <- c(
+              prior(normal(0, 6), class = "b"),
+              prior(normal(0, 6), class = "Intercept"),
+              prior(normal(0, 6), class = "sd", lb = 0),
+              prior(lkj(2), class = "cor")
+              )
+
+# run models
+simple_model_d_f0 <- brm(
+  formula_d_f0,
+  data = xdata_reduced_1,
+  #file = "../models/model_simple_df0",
+  family = "gaussian",
+  seed = 123,
+  iter = 8000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+simple_model_d_t <- brm(
+  formula_d_t,
+  data = xdata_reduced_1,
+  file = "../models/model_simple_dt",
+  family = "gaussian",
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.9,
+                 max_treedepth = 10)
+  )
+
+```
+
+# Plot model results
+
+```{r}
+
+# create new data to predict
+newdata_delta_f0 <- expand_grid(delta_f_raw = c(-20,20))
+newdata_delta_t <- expand_grid(delta_t = c(40,120))
+
+# plot delta_f0
+plot_model_delta_f0 <- 
+  simple_model_d_f0 |> 
+  epred_draws(newdata = newdata_delta_f0,
+              re_formula = NA) |> 
+    group_by(delta_f_raw) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  ggplot(aes(x = as.factor(delta_f_raw),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           color = as.factor(delta_f_raw))) +
+    geom_errorbar(aes(ymin = pred_0025,
+                    ymax = pred_0975),
+                width = 0.1,
+                color = "black") +
+  geom_point(size = 4,
+             color = "black") +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option="viridis") +
+  #scale_y_continuous(limits = c(0,10)) +
+  # scale_x_continuous(limits = c(40,250),
+  #                    breaks = c(40,80,120,250)) +
+  #facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\npresented pitch difference",
+       y = "predicted \npitch rating in Hz\n",
+       fill = "delta f0\n") +
+  guides(colour = "none") +
+  theme_minimal()
+
+# plot delta_t
+plot_model_delta_t <- 
+  simple_model_d_t |> 
+  epred_draws(newdata = newdata_delta_t,
+              re_formula = NA) |> 
+    group_by(delta_t) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  ggplot(aes(x = as.factor(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           color = as.factor(delta_t))) +
+  geom_errorbar(aes(ymin = pred_0025,
+                    ymax = pred_0975),
+                width = 0.1,
+                color = "black") +
+  geom_point(size = 4,
+             color = "black") +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,10)) +
+  # scale_x_continuous(limits = c(40,250),
+  #                    breaks = c(40,80,120,250)) +
+  #facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nduration of tonal slope in ms",
+       y = "predicted \npitch rating in Hz\n") +
+  guides(colour = "none") +
+  theme_minimal()
+
+# plot together
+plot_model_delta_f0 + plot_model_delta_t + plot_layout(guides = 'collect',
+              axes = 'collect') 
+
+```
+
+# Inference using BF
+
+```{r inference}
+
+bayesfactor_pointnull(posterior = simple_model_d_f0,
+                      null = 0)
+
+# BF = 2.88
+
+bayesfactor_pointnull(posterior = simple_model_d_t,
+                      null = 0)
+
+# BF = 856.24
+
+```
+
+# Simulation
+
+```{r wrapper_around_sim}
+
+my_sim_data <- function(
+# participants
+subj_n = 50,    # number of subjects per language
+rep_n = 3,      # number of repetitions
+
+# predictors
+# lang_n = 4   # number of languages
+b0 = 0,        # intercept
+b1 = 3.55,     # fixed effect of delta_t (difference between delta_t = 40 vs. 60) fixef(simple_model_d_t)[2,1]
+
+# random effects
+u0s_sd = 0.91,      # random intercept SD for subjects
+u1s_sd = 0.05,      # random b1 slope SD for subjects (delta_t)
+r01s = -0.27,         # correlation between random effects b0 and b1 for subjects
+
+sigma_sd = 5.66) {    # error SD
+
+# create data frame
+df <-  add_random(subject = subj_n) |> 
+        # set up within subject predictors
+        add_within("subject", 
+                   delta_f = c(-0.5,0.5)) |> 
+        add_within("subject", 
+                   repetition = seq(1, rep_n, 1)) |> 
+        # set up by_subject random intercept and slope for delta_f
+        add_ranef("subject", u0s = u0s_sd, u1s = u1s_sd, .cors = r01s) |> 
+        # add error term (by observation)
+        add_ranef(sigma = sigma_sd) |> 
+        # generate responses 
+        mutate(response = b0 + u0s + (b1 + u1s) * delta_f + sigma,
+               delta_f = as.factor(delta_f))
+
+        contrasts(df$delta_f) = c(-0.5,0.5)
+        
+df
+}
+
+```
+
+```{r wrapper_around_model}
+
+# model formula
+formula_sim = bf(response ~ delta_f + (delta_f | subject))
+
+# my priors (default for now plus weakly regularizing for beta)
+mypriors <- c(prior(normal(0, 2), class = "b"),
+              prior(normal(0, 2), class = "Intercept"),
+              prior(normal(0, 2), class = "sd"),
+              prior(lkj(1), class = "cor"))
+
+# number of sims per specification (target = 100)
+n_sims <- 50
+
+# Container for model fits
+bfs_list <- list()
+subject_list <- list()
+
+# Define subject number for different models (30-70)
+subjects <- as.list(seq(20,50,10))
+
+# Loop through priors and fit models
+for (i in seq_along(subjects)) {
+    # Inner loop over simulations
+    for (j in 1:n_sims) {
+
+    dat_sim <- my_sim_data(subj_n = subjects[[i]])
+   
+    fit <- brm(
+    formula = formula_sim,
+    data = dat_sim,
+    iter = 4000,
+    warmup = 2000,
+    control = list(adapt_delta = 0.99),
+    family = gaussian(),
+    prior = mypriors
+  )
+
+  # test BF
+  bf <- bayesfactor_pointnull(posterior = fit,
+                              null = 0)
+  #extract critical bf
+  bf_beta <- exp(bf[2,2])
+  
+  bfs_list[[paste0("bf_beta", i, "_sim", j)]] <- bf_beta
+  subject_list[[paste0("nsubj =", i, "_sim", j)]] <- length(fit$basis$group_levels$subject)
+    } 
+}
+
+
+```
+
+# Plot simulations
+
+```{r extract_results}
+
+loop_results <- as.data.frame(bfs_list) |> 
+  pivot_longer(cols = everything(), names_to = "condition", values_to = "BF") |> 
+  separate_wider_delim(condition, "_", names = c(NA, "subject_condition","sim_n"))
+
+subject_list <- as.data.frame(subject_list) |> 
+  pivot_longer(cols = everything(), names_to = "sim", values_to = "subj_n") 
+
+loop_results$subj_n = subject_list$subj_n
+
+```
+
+```{r}
+
+# plot results
+loop_agg <- loop_results |> 
+  group_by(subj_n) |> 
+  summarise(BF_l10 = quantile(BF, prob = 0.1),
+            BF = median(BF)) 
+  
+ggplot(data = loop_agg,
+       aes(x = subj_n, y = BF)) +
+  geom_point(data = loop_results,
+             alpha = 0.2) +
+  geom_point(size = 3) +
+  geom_path() +
+  geom_line(aes(y = BF_l10),
+               lty = "dotted",
+            color = "purple") +
+  geom_hline(yintercept = 10,
+             lty = "dashed") +
+  scale_x_continuous(limits = c(30,90)) +
+  scale_y_continuous(trans = "log10") +
+  labs(x = "number of subjects",
+         y = "Bayes Factor against point-zero\n(approximated with Savage-Dickey)") +
+  theme_minimal()
+
+```

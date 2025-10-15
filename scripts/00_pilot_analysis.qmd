@@ -1,0 +1,241 @@
+---
+title: "pilot_data_analysis"
+format: html
+editor: visual
+---
+
+```{r setup}
+#| include: FALSE
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux)
+
+# Set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Data & Wrangling
+
+Wrangle the data, generate derivatives for the analysis.
+
+```{r data_wrangling}
+
+# load in data 2025/09/11
+xdata <- read_csv("../data/merged_250911.csv")
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  # remove erroneous data points
+  filter(delta_t != 0) |> 
+  # derive derivates
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # centralise
+         delta_f_raw_c = delta_f_raw - mean(delta_f_raw),
+         # transform delta_f_raw Hz into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
+         # transform response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # transform response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
+         # adjust response direction for absolute delta_f values
+         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
+         # transform response_f_rel_sign into STs (reference 150Hz)
+         response_f_rel_sign_st = 12 * log2((150-response_f_rel_sign)/150),
+         # calculate response proportional to delta_f
+         response_f_prop = response_f_rel / delta_f_raw,
+         # calculate response proportional to delta_f in STs
+         response_f_prop_st = response_f_rel_st / delta_f_raw_st,
+         # make participant ID a character vector
+         participant = as.character(participant)
+         )
+
+# To do: exclusion criteria
+
+```
+
+# Estimates for simplified model
+
+In order to replicate the original findings by Hombert (1975) and to enable relevant and sensitive exploratory analyses (see below), we need a sample size N that allows us to provide strong evidence that participants perceive the direction of the pitch perturbation (i.e. falling vs. rising).
+
+The literature on Cf0 speech production suggests that at least languages undergoing tonogenesis tend to have relatively large Δf0 like for example Korean (Han & Weitzman, 1970 report 42 Hz, Jun, 1996 reports 58 Hz; Choi, 2002 reports 36-47 Hz). Our sample should guarantee that, for a conservatively chosen combination of Δf0 and Δt that reflects pessimistic conditions under which tonogenesis can occur, we can reliably detect evidence for differential pitch responses. We thus chose the shortest Δt (40 ms) and compared Δf0 of -20 against 20 Hz.
+
+Comparing only two conditions allows us to simplify the assumptions of the inferential model and increase the computational feasibility of our simulation-based approach to estimate sample size. At the same time, we reduce the number of observations based on which we make this inference (i.e. not pooling across conditions) which drastically decreases sensitivity and therefore allows for a conservative estimate.
+
+We predict pitch responses (Hz) based on the contrast-coded factorial difference (-0.5 vs. 0.5) of Δf0 = 20 Hz against Δf0 = -20 Hz alongside a by-subject random intercept and slope for the predictor. The model assumes a Gaussian error distribution (see 1).
+
+\(1\) $$y_{ij} = 𝛽_0 + 𝛽_{1xij} + u_{0j} + u_{1xij} + 𝜖_{ij}$$
+
+```{r model_specs}
+
+# target condition for delta_f
+target_cond = 20
+
+# prepare reduced dataset for model
+xdata_red <- xdata |> 
+  # only for delta_t = 40 ms
+  filter(delta_t  == 40,
+         # only for delta_f = -20,20 Hz
+         delta_f_raw %in% c(-target_cond,target_cond)) |>
+  # make factor
+  mutate(delta_f_raw = as.factor(delta_f_raw))
+
+# contrast-code with -20 -> -.5
+contrasts(xdata_red$delta_f_raw) <- c(-.5,.5)
+
+# brms formula
+formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participant))
+
+# We used regularizing, weakly informative priors for relevant parameters (Gelman, Simpson, & Betancourt 2017). The width of those regularizing priors was chosen based on existing models on the perception of dynamic pitch changes (Rossi 1971, 1978) suggesting that the perceived pitch corresponds to a time point at ⅔ of the pitch change, corresponding to ⅓ of the Δf0. Thus, for the chosen Δf0s (-20 Hz  vs 20 Hz), we would expect reasonable ceiling performances for them to be -6.7 Hz and 6.7 Hz respectively, rendering the expected maximal difference between the two conditions at 13.3 Hz. The chosen priors cover effect magnitude up to these expected ceiling performances and weigh down unrealistic values far above these values.
+
+ceiling = target_cond * 1/3
+ceiling
+
+# my priors 
+# NOTE: could even specify 2/3 as upper boundary
+mypriors <- c(
+              # prior(normal(0, 3.34), class = "b"),
+              # prior(normal(0, 3.34), class = "Intercept"),
+              # prior(normal(0, 3.34), class = "sd", lb = 0),
+              prior(normal(0, 6.67), class = "b"),
+              prior(normal(0, 6.67), class = "Intercept"),
+              prior(normal(0, 6.67), class = "sd", lb = 0),
+              prior(lkj(1), class = "cor")
+              )
+
+# run prior-only model for inspection
+simple_model_d_f0_priors <- brm(
+  formula_d_f0,
+  data = xdata_red,
+  file = "../models/model_simple_df0_priors",
+  family = "gaussian",
+  sample_prior = "only",
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+
+```
+
+# Check priors
+
+```{r plot_priors}
+
+# plot priors
+  simple_model_d_f0_priors |> 
+  spread_draws(b_delta_f_raw1) |> 
+  ggplot(aes(x = b_delta_f_raw1)) + 
+  stat_histinterval(slab_color = "darkred",
+                    slab_fill = alpha("darkred", 0.5),
+                    fill = NA,
+                    color = NA,
+                    outline_bars = FALSE) +
+  geom_vline(xintercept = c(2*-ceiling, 2*ceiling),
+             lty = "dashed") +
+  labs(x = "\n prior pitch difference between conditions",
+       y = "") +
+  scale_x_continuous(limits =c(-25,25)) +
+  theme_minimal() +
+  theme(axis.text.y = element_blank())
+
+# looks good, including values up to ceiling and down weighting values much beyond that 
+
+```
+
+# Run model
+
+```{r run_model}
+
+# Run model with generous amount of iterations
+simple_model_d_f0 <- brm(
+  formula_d_f0,
+  data = xdata_red,
+  file = "../models/model_simple_df0",
+  family = "gaussian",
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+simple_model_d_f0
+
+# check caterpillar
+plot(simple_model_d_f0) # looks like chains are well mixed
+
+# check samples against data
+pp_check(simple_model_d_f0) # hm looks like the data are more peaky, like due to the over representation of "no-direction" responses. 
+
+
+```
+
+# Plot estimates
+
+```{r plot_model}
+
+# create new data to predict
+newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
+
+# plot delta_f0
+#plot_model_delta_f0 <- 
+  simple_model_d_f0 |> 
+  epred_draws(newdata = newdata_delta_f0,
+              re_formula = NA) |> 
+    group_by(delta_f_raw) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  ggplot(aes(x = as.factor(delta_f_raw),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           color = as.factor(delta_f_raw))) +
+  geom_errorbar(aes(ymin = pred_0025,
+                    ymax = pred_0975),
+                width = 0.1,
+                color = "black") +
+  geom_point(size = 4,
+             color = "black") +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(-ceiling,ceiling)) +
+  labs(x = "\npresented pitch difference",
+       y = "predicted pitch rating in Hz\n",
+       fill = "delta f0\n") +
+  guides(colour = "none") +
+  theme_minimal()
+
+```
+
+# Inference using Bayes Factor (through Savage-Dickey)
+
+```{r inference}
+
+# bf against point zero
+bayesfactor_pointnull(posterior = simple_model_d_f0,
+                      null = 0)
+# 10 
+
+# bf against point zero, setting ordered restriction for one-sided
+bayesfactor_parameters(simple_model_d_f0, direction = ">")
+# 19
+
+
+# bf directional 
+hyp1 <- hypothesis(simple_model_d_f0, "delta_f_raw1 > 0")
+hyp1$hypothesis[[6]]
+# BF = 266
+
+```
