@@ -147,23 +147,23 @@ formula_sim = bf(response ~ delta_f + (delta_f | subject))
 
 # my priors (default for now plus weakly regularizing for beta)
 mypriors <- c(
-              # prior(normal(0, 3.34), class = "b"),
-              # prior(normal(0, 3.34), class = "Intercept"),
-              # prior(normal(0, 3.34), class = "sd", lb = 0),
-              prior(normal(0, 6.67), class = "b"),
-              prior(normal(0, 6.67), class = "Intercept"),
-              prior(normal(0, 6.67), class = "sd", lb = 0),
+              # prior(normal(0, 6.67), class = "b"),
+              # prior(normal(0, 6.67), class = "Intercept"),
+              # prior(normal(0, 6.67), class = "sd", lb = 0),
+              prior(cauchy(0, 6.67), class = "b"),
+              prior(cauchy(0, 6.67), class = "Intercept"),
+              prior(cauchy(0, 6.67), class = "sd", lb = 0),
               prior(lkj(1), class = "cor")
               )
 
-# number of sims per specification (target = 100)
+# number of sims per specification (target = 500?)
 n_sims <- 100
 
 # Container for model fits
 bfs_list <- list()
 subject_list <- list()
 
-# Define subject number for different models (30-70)
+# Define subject number for different models (10-50)
 subjects <- as.list(seq(10,50,5))
 
 # Loop through priors and fit models

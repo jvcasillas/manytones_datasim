@@ -101,12 +101,12 @@ ceiling
 # my priors 
 # NOTE: could even specify 2/3 as upper boundary
 mypriors <- c(
-              # prior(normal(0, 3.34), class = "b"),
-              # prior(normal(0, 3.34), class = "Intercept"),
-              # prior(normal(0, 3.34), class = "sd", lb = 0),
-              prior(normal(0, 6.67), class = "b"),
-              prior(normal(0, 6.67), class = "Intercept"),
-              prior(normal(0, 6.67), class = "sd", lb = 0),
+              # prior(normal(0, 6.67), class = "b"),
+              # prior(normal(0, 6.67), class = "Intercept"),
+              # prior(normal(0, 6.67), class = "sd", lb = 0),
+              prior(cauchy(0, 6.67), class = "b"),
+              prior(cauchy(0, 6.67), class = "Intercept"),
+              prior(cauchy(0, 6.67), class = "sd", lb = 0),
               prior(lkj(1), class = "cor")
               )
 
@@ -226,16 +226,16 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
 # bf against point zero
 bayesfactor_pointnull(posterior = simple_model_d_f0,
                       null = 0)
-# 10 
+# 5.48 
 
 # bf against point zero, setting ordered restriction for one-sided
 bayesfactor_parameters(simple_model_d_f0, direction = ">")
-# 19
+# 10.8
 
 
 # bf directional 
 hyp1 <- hypothesis(simple_model_d_f0, "delta_f_raw1 > 0")
 hyp1$hypothesis[[6]]
-# BF = 266
+# BF = 194
 
 ```
