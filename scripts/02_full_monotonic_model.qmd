@@ -58,3 +58,113 @@ xdata <- xdata |>
          )
 
 ```
+
+## Exploration of landscape
+
+We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
+
+```{r}
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+descriptive_plot <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  geom_point(data = xdata_agg_all) +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+
+descriptive_plot
+
+```
+
+Slight non-linear relationship with delta_t. Let's look at it in 3-dimensional space:
+
+```{r}
+
+# set up matrix
+z_matrix <- matrix(xdata_agg_all$response_f_rel_st, nrow = 8, ncol = 6, byrow = TRUE)
+
+x_axis <- unique(xdata_agg_all$delta_t)
+y_axis <- unique(xdata_agg_all$delta_f_raw_st)
+
+plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix, 
+        type = "surface",
+        colors = 'RdPu') |> 
+  layout( scene = list(
+    xaxis = list(title = 'Onset Duration (ms)', tickvals = x_axis, ticktext = x_axis),
+    yaxis = list(title = 'Onset Frequency in STs', tickvals = list(-5,-4,-3,-2,-1,0,1,2,3,4,5), ticktext = list(-5,-4,-3,-2,-1,0,1,2,3,4,5)),
+    zaxis = list(title = 'Response STs')
+  ))
+
+```
+
+## Model with monotonic predictors
+
+```{r}
+
+# brms formula (full)
+# formula_mono = bf(response_f_rel ~ mo(delta_f_raw) * mo(delta_t) + (delta_f_raw * delta_t | participant))
+
+# start with simple
+formula_mono = bf(response_f_rel ~ mo(delta_f_raw) + mo(delta_t))
+
+# my priors 
+mypriors <- c(
+              prior(cauchy(0, 10), class = "b"),
+              prior(cauchy(0, 10), class = "Intercept")#,
+             # prior(cauchy(0, 10), class = "sd", lb = 0),
+             # prior(lkj(1), class = "cor")
+              )
+
+# Run model with generous amount of iterations
+mono_model_d_f0 <- brm(
+  formula_mono,
+  data = xdata,
+  #file = "../models/mono_model",
+  #family = student,
+  family = gaussian,
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+# doesn't fit well
+
+mono_model_d_f0
+
+# check caterpillar
+plot(mono_model_d_f0) # ...
+
+# check samples against data
+pp_check(mono_model_d_f0, ndraws = 100) # ...
+
+```
