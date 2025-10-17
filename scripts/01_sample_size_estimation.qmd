@@ -65,6 +65,8 @@ Based on the estimated values the difference between Δf0 = -20 ms and -20 ms (#
 
 ```{r parameter_extraction}
 
+# NOTE: currently still based on the gaussian models. needs to be updated if we go with the student error terms
+
 # load in model
 xmdl <- readRDS("../models/model_simple_df0.rds")
 

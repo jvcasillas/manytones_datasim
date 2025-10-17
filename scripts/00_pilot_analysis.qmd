@@ -91,7 +91,10 @@ xdata_red <- xdata |>
 contrasts(xdata_red$delta_f_raw) <- c(-.5,.5)
 
 # brms formula
-formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participant))
+# formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participant))
+
+# brms formula for student
+formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participant), nu = 4)
 
 # We used regularizing, weakly informative priors for relevant parameters (Gelman, Simpson, & Betancourt 2017). The width of those regularizing priors was chosen based on existing models on the perception of dynamic pitch changes (Rossi 1971, 1978) suggesting that the perceived pitch corresponds to a time point at ⅔ of the pitch change, corresponding to ⅓ of the Δf0. Thus, for the chosen Δf0s (-20 Hz  vs 20 Hz), we would expect reasonable ceiling performances for them to be -6.7 Hz and 6.7 Hz respectively, rendering the expected maximal difference between the two conditions at 13.3 Hz. The chosen priors cover effect magnitude up to these expected ceiling performances and weigh down unrealistic values far above these values.
 
@@ -114,8 +117,9 @@ mypriors <- c(
 simple_model_d_f0_priors <- brm(
   formula_d_f0,
   data = xdata_red,
-  file = "../models/model_simple_df0_priors",
-  family = "gaussian",
+  #file = "../models/model_simple_df0_priors",
+  family = student,
+  #family = gaussian,
   sample_prior = "only",
   seed = 123,
   iter = 4000,
@@ -145,7 +149,7 @@ simple_model_d_f0_priors <- brm(
              lty = "dashed") +
   labs(x = "\n prior pitch difference between conditions",
        y = "") +
-  scale_x_continuous(limits =c(-25,25)) +
+  scale_x_continuous(limits =c(-45,45)) +
   theme_minimal() +
   theme(axis.text.y = element_blank())
 
@@ -161,12 +165,14 @@ simple_model_d_f0_priors <- brm(
 simple_model_d_f0 <- brm(
   formula_d_f0,
   data = xdata_red,
-  file = "../models/model_simple_df0",
-  family = "gaussian",
+  #file = "../models/model_simple_df0",
+  #family = gaussian,
+  family = student,
   seed = 123,
   iter = 4000,
   warmup = 2000,
   prior = mypriors, 
+  #prior = c(mypriors, prior(gamma(4, 0.1), class = nu)),
   control = list(adapt_delta = 0.99,
                  max_treedepth = 10)
   )
@@ -177,7 +183,7 @@ simple_model_d_f0
 plot(simple_model_d_f0) # looks like chains are well mixed
 
 # check samples against data
-pp_check(simple_model_d_f0) # hm looks like the data are more peaky, like due to the over representation of "no-direction" responses. 
+pp_check(simple_model_d_f0, ndraws = 100) # hm looks like the data are more peaky, like due to the over representation of "no-direction" responses. 
 
 
 ```
