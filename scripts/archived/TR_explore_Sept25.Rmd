@@ -113,7 +113,7 @@ As dependent on stimulus_type:
 
 # aggregate over delta_f, delta_t, stimuli_type and accuracy
 xdata_agg_all <- xdata |> 
-  group_by(delta_f, delta_t, stimuli_type) |> 
+  group_by(delta_f, delta_t) |> 
   summarise(correct = mean(correct, na.rm = TRUE))
   
 # Plot empirical accuracy
@@ -432,8 +432,8 @@ multinomial_model <- brm(
   prior = c(prior(normal(0,0.3), class = "b", dpar = "mul"),
             prior(normal(0,0.3), class = "b", dpar = "mum"),
             prior(lkj(1), class = "cor")), 
-  control = list(adapt_delta=0.99,
-                 max_treedepth = 12)
+  control = list(adapt_delta=0.9,
+                 max_treedepth = 10)
   )
 
 # model convergence?
@@ -497,50 +497,72 @@ xdata <- xdata |>
 # fit model to ternary response
 xdata_agg_viz <- xdata |> 
   mutate(correct_m = as.factor(correct_m)) |> 
-  group_by(delta_f, delta_t,correct_m) |> 
+  group_by(delta_f, delta_t, correct_m) |> 
   count() |> 
   group_by(delta_f, delta_t) |> 
+  rename("delta_f_c" = delta_f,
+         "delta_t_c" = delta_t) |> 
   mutate(pred_m = n/sum(n),
          ".category" = correct_m) 
 
 
 # formula
-formula_cat_2 = bf(correct_m ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+formula_cat_2 = bf(correct_m ~ delta_t_c * delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+
+formula_cat_2_mo = bf(correct_m ~ mo(delta_t) + mo(delta_f), family = "categorical")
 
 # run model (takes 20mins)
-multinomial_model <- brm(
+multinomial_model_2 <- brm(
   formula_cat_2,
   data = xdata,
-  file = "../models/model_glm_cat2_TR",
+  #file = "../models/model_glm_cat2_TR",
   # given that the predictors units are rather small, we pick relative narrow prior widths
   prior = c(prior(normal(0,1), class = "b", dpar = "muincorrect"),
             prior(normal(0,1), class = "b", dpar = "munodirection"),
-            prior(lkj(1), class = "cor"),
-            prior(normal(0,1), class = "sd", dpar = "muincorrect"),
-            prior(normal(0,1), class = "sd", dpar = "munodirection")), 
+            prior(lkj(1), class = "cor")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 10)
+  )
+
+
+# run model with mo
+multinomial_model_2_mo <- brm(
+  formula_cat_2_mo,
+  data = xdata,
+  file = "../models/model_glm_cat2_mo_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,1), class = "b", dpar = "muincorrect"),
+            prior(normal(0,1), class = "b", dpar = "munodirection")
+            #prior(lkj(1), class = "cor"),
+            #prior(normal(0,1), class = "sd", dpar = "muincorrect"),
+            #prior(normal(0,1), class = "sd", dpar = "munodirection")
+            ), 
   control = list(adapt_delta=0.99,
                  max_treedepth = 10)
   )
 
 # model convergence?
-plot(multinomial_model, variables = "^b_") # okay
+plot(multinomial_model_2, variables = "^b_") # okay
 
 newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
                        delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
 
-multinomial_model |> 
+multi_pred <- multinomial_model_2 |> 
     epred_draws(newdata = newdata,
               re_formula = NA) |> 
     group_by(delta_t_c, delta_f_c, .category) |> 
     summarise(pred_m = mean(.epred, na.rm = TRUE),
               pred_0025 = quantile(.epred, prob = 0.025),
               pred_0975 = quantile(.epred, prob = 0.975)) |> 
-  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
-         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
-  ggplot(aes(x = as.numeric(delta_t),
-           y = pred_m,
+  mutate(delta_t_c = delta_t_c + mean(xdata$delta_t),
+         delta_f_c = delta_f_c + mean(xdata$delta_f)) 
+
+
+multi_pred |>  
+  ggplot(aes(x = as.numeric(delta_t_c),
+             y = pred_m,
            #group = as.numeric(delta_t),
-           fill = as.factor(delta_f),
+           fill = as.factor(delta_f_c),
            group = .category)) +
   geom_hline(yintercept = 0.5,
              lty = "dashed") +
@@ -552,16 +574,18 @@ multinomial_model |>
             colour = "black",
             lwd = 2) +
   geom_point(data = xdata_agg_viz,
-             size = 3) + 
+             aes(x = delta_t_c, fill = as.factor(delta_f_c)),
+             size = 3) +
   geom_point(data = xdata_agg_viz,
+             aes(x = delta_t_c,  fill = as.factor(delta_f_c)),
              pch = 21,
-             size = 3) + 
+             size = 3) +
   scale_fill_viridis_d(option="viridis") +
   scale_y_continuous(limits = c(0,1),
                      breaks = seq(0,1,.25)) +
   scale_x_continuous(limits = c(40,250),
                      breaks = c(40,80,120,250)) +
-  facet_grid(.category ~ delta_f) +
+  facet_grid(.category ~ delta_f_c) +
   labs(x = "\nslope duration in ms",
        y = "posterior predictions for\nprobability of different responses\n",
        fill = "delta f0\n") +
@@ -600,35 +624,42 @@ We explore how pitch perception changes as a function of `delta_t` and `delta_f.
 ```{r}
 
 xdata_agg <- xdata |> 
-  group_by(delta_f_raw_st, delta_t, participant) |> 
-  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
   
 xdata_agg_all <- xdata |> 
-  group_by(delta_f_raw_st, delta_t) |> 
-  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
   
 descriptive_plot_03 <- 
 ggplot(data = xdata_agg, 
        aes(x = delta_t,
-           y = response_f_rel_st,
-           color = delta_f_raw_st)) +
-  geom_line(data = xdata_agg, 
-            aes(group = interaction(participant, delta_f_raw_st)),
-          alpha = 0.2) +
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  # geom_line(data = xdata_agg, 
+  #           aes(group = interaction(participant, delta_f_raw_st)),
+  #         alpha = 0.2) +
   geom_point(data = xdata_agg_all) +
   geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw_st),
+             aes(group = delta_f_raw),
              lwd = 2.5,
             color = "black") +
   geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw_st),
+             aes(group = delta_f_raw),
              lwd = 2) +
-  scale_y_continuous(limits = c(-4,4),
-                      breaks = seq(-4,4,1)) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
   scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
-  scale_color_viridis(option="viridis") +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
   theme_minimal()
   
+
 descriptive_plot_03
 
 ```
@@ -689,10 +720,10 @@ xdata <- xdata |>
 
 # run model
 parametric_model <- brm(
-  bf(response_f_rel_st ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
+  bf(response_f_rel ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
      a ~ 1,
-     b ~ delta_f_raw_st,
-     c ~ delta_f_raw_st,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
      x0 ~ 1,
      nl = T),
   data = xdata,
@@ -723,19 +754,26 @@ model_plot_01 <-
 ggplot(data = xdata, 
        aes(x = delta_t,
            y = preds,
-           color = delta_f_raw_st,
-           group = delta_f_raw_st)) +
+           color = delta_f_raw,
+           group = delta_f_raw)) +
   geom_line(lwd = 2.5, color = "black") +
   geom_line(lwd = 2) +
-  scale_y_continuous(limits = c(-4,4),
-                      breaks = seq(-4,4,1)) +
+   scale_y_continuous(limits = c(-20,20),
+                     breaks = seq(-20,20,10)) +
   scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
-  scale_color_viridis(option = "viridis") +
+  scale_color_viridis_c(option= "viridis") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "predicted response in Hz\n",
+       color = "pitch difference") +
   theme_minimal()
   
 model_plot_01
 
-data_v_model <- descriptive_plot_03 + model_plot_01
+data_v_model <- descriptive_plot_03 / model_plot_01 +
+  plot_layout(guides = 'collect',
+              axes = 'collect')
+
 data_v_model
 
 # pretty decent fit
@@ -764,5 +802,158 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
     xaxis = list(title = 'Onset Frequency in STs', tickvals = list(-5,-4,-3,-2,-1,0,1,2,3,4,5), ticktext = list(-5,-4,-3,-2,-1,0,1,2,3,4,5)),
     zaxis = list(title = 'Response STs')
   ))
+
+```
+
+
+## Pitch proportions
+
+We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
+
+```{r}
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_prop, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_prop, na.rm = TRUE))
+  
+descriptive_plot_03 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  # geom_line(data = xdata_agg, 
+  #           aes(group = interaction(participant, delta_f_raw_st)),
+  #         alpha = 0.2) +
+  # geom_line(data = xdata_agg_all,
+  #            aes(group = delta_f_raw),
+  #            lwd = 2.5,
+  #           color = "black", alpha = 0.5) +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2, 
+            alpha = 0.5) +
+  geom_point(data = xdata_agg_all, size = 3, color = "black") +
+  geom_point(data = xdata_agg_all, size = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed ST perceived pitch proportion\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+
+descriptive_plot_03
+
+```
+
+```{r}
+
+
+# add ceiling
+xdata <- xdata |> 
+  mutate(
+  #x_min=min(delta_t),
+  x_max = max(delta_t),
+  # glissando threshold according to the 2/3 rule
+  glissando = 2/3 * 0.75
+)
+
+# TO DO: Explore other functions?
+## exponential
+formula <- bf(response_f_prop ~ reference + (ceiling - reference) * exp(-k),
+     reference ~ 0,
+     ceiling ~ 0.4,
+     k ~ 1 + delta_t,
+     nl = T)
+
+## gumbel function?
+
+## Naka-rushton?
+
+# Model of the following basic structure:
+# y ~ a + b*x^
+formula <- bf(response_f_prop ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
+     x0 ~ 1 ,
+     nl = T)
+
+# TO DO: Justify priors
+# TO DO: random slopes for all these parameters? Computationally feasible?
+
+# run model
+parametric_model <- brm(
+  formula,
+  data = xdata,
+  #file = "../models/model_prop_nl",
+  prior = prior(normal(0,2), nlpar = "a")+
+          prior(normal(0,2), nlpar = "b")+
+          prior(normal(0,2), nlpar = "x0")+
+          prior(normal(0,1), nlpar = "c", lb = 0, ub = 1),
+  control = list(adapt_delta=0.99)
+  )
+
+# comment TR: takes 90 seconds on my machine, so computationally expensive
+parametric_model
+# model predicts mostly linear relationship
+
+# posterior predictive check
+pp_check(parametric_model)
+# 1. not truly continuous measure, problem?
+# 2. regardless, distribution looks spikier than gaussian
+
+# check chains
+plot(parametric_model, pars = "^b_") # okay
+
+newdata <- expand_grid(delta_t = seq(40,250,10),
+                       delta_f_raw = c(-40,-30,-20,-10,10,20,30,40),
+                       x_max = 250)
+
+
+# Visualize
+model_plot_01 <- parametric_model |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t, delta_f_raw) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975),
+              threshold = ifelse(pred_m > 0.25, "yes", "no")) |> 
+ggplot(aes(x = delta_t,
+           y = pred_m,
+           group = delta_f_raw,
+           color = delta_f_raw
+           )
+       ) +
+  geom_line(lwd = 2.5) +
+  geom_hline(yintercept = 0.25, 
+             lty = "dashed",
+             colour = "black") +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "predicted proportion of perceived pitch to hear pitch\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+model_plot_01
+
+data_v_model <- descriptive_plot_03 + model_plot_01 +
+  plot_layout(guides = 'collect',
+              axes = 'collect')
+
+data_v_model
+
+# pretty decent fit
 
 ```

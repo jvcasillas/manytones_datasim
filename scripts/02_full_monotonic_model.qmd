@@ -1,0 +1,60 @@
+---
+title: "02_full_monotonic_model"
+format: html
+editor: visual
+---
+
+```{r setup}
+#| include: FALSE
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux)
+
+# Set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Data & Wrangling
+
+Wrangle the data, generate derivatives for the analysis.
+
+```{r data_wrangling}
+
+# load in data 2025/09/11
+xdata <- read_csv("../data/merged_250911.csv")
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  # remove erroneous data points
+  filter(delta_t != 0) |> 
+  # derive derivates
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # centralise
+         delta_f_raw_c = delta_f_raw - mean(delta_f_raw),
+         # transform delta_f_raw Hz into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
+         # transform response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # transform response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
+         # adjust response direction for absolute delta_f values
+         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
+         # transform response_f_rel_sign into STs (reference 150Hz)
+         response_f_rel_sign_st = 12 * log2((150-response_f_rel_sign)/150),
+         # calculate response proportional to delta_f
+         response_f_prop = response_f_rel / delta_f_raw,
+         # calculate response proportional to delta_f in STs
+         response_f_prop_st = response_f_rel_st / delta_f_raw_st,
+         # make participant ID a character vector
+         participant = as.character(participant)
+         )
+
+```
