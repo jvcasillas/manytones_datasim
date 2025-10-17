@@ -128,43 +128,102 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 
 ```{r}
 
+# code predictors as ordered factors
+xdata$delta_f_raw_o <- factor(xdata$delta_f_raw, 
+                              levels = c(-40,-30,-20,-10,10,20,30,40),
+                              ordered = TRUE)
+xdata$delta_t_o <- factor(xdata$delta_t, 
+                          levels = c(40,60,80,100,120,250),
+                          ordered = TRUE)
+
 # brms formula (full)
 # formula_mono = bf(response_f_rel ~ mo(delta_f_raw) * mo(delta_t) + (delta_f_raw * delta_t | participant))
 
 # start with simple
-formula_mono = bf(response_f_rel ~ mo(delta_f_raw) + mo(delta_t))
+formula_mono = bf(response_f_rel ~ mo(delta_t_o) * mo(delta_f_raw_o))
+
+# get priors
+get_prior(formula_mono, xdata)
 
 # my priors 
 mypriors <- c(
               prior(cauchy(0, 10), class = "b"),
               prior(cauchy(0, 10), class = "Intercept")#,
+              #dirichlet(c(1,1,1,1,1)), class = "simo", coef = "modelta_t1",
              # prior(cauchy(0, 10), class = "sd", lb = 0),
              # prior(lkj(1), class = "cor")
               )
 
-# Run model with generous amount of iterations
+# Run model with gaussian error term
 mono_model_d_f0 <- brm(
   formula_mono,
   data = xdata,
-  #file = "../models/mono_model",
+  file = "../models/mono_model",
   #family = student,
   family = gaussian,
   seed = 123,
   iter = 4000,
   warmup = 2000,
   prior = mypriors, 
-  control = list(adapt_delta = 0.99,
+  control = list(adapt_delta = 0.95,
                  max_treedepth = 10)
   )
 
-# doesn't fit well
-
-mono_model_d_f0
-
 # check caterpillar
-plot(mono_model_d_f0) # ...
+plot(mono_model_d_f0) # mixes well
 
 # check samples against data
-pp_check(mono_model_d_f0, ndraws = 100) # ...
+pp_check(mono_model_d_f0, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
 
+# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+
+```
+
+## Plot model
+
+```{r}
+
+#xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
+
+# create new data for prediction
+newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
+                       delta_f_raw_o = unique(xdata$delta_f_raw_o)
+                       )
+
+# Visualize
+prediction_mono <- mono_model_d_f0 |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_o, delta_f_raw_o) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  rename(delta_t = delta_t_o,
+         delta_f_raw = delta_f_raw_o) |> 
+  mutate(delta_t = as.numeric(as.character(delta_t)),
+         delta_f_raw = as.numeric(as.character(delta_f_raw)))
+
+model_plot <- prediction_mono |> 
+  ggplot(aes(x = delta_t,
+             y = pred_m,
+             color = delta_f_raw,
+             group = delta_f_raw)) +
+  geom_point() +
+  geom_line(lwd = 2.5, 
+             color = "black") +
+  geom_line(lwd = 2) +
+  scale_x_continuous(breaks = c(40,60,80,100,120,250)) +
+  scale_color_viridis(option= "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "predicted response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+model_plot
+
+data_v_model <- descriptive_plot / model_plot +
+  plot_layout(guides = 'collect',
+              axes = 'collect')
+
+data_v_model
 ```

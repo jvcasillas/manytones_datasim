@@ -1,0 +1,959 @@
+---
+title: "ManyTones analysis"
+author: "Timo Roettger"
+date: "2025-07-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR)
+
+# Set the current working directory to the one where this file is
+current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
+setwd(current_working_dir)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Data & Wrangling
+
+```{r}
+
+# load in data 2025/09/11
+xdata <- read_csv("../data/merged_250911.csv")
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  # filter erroneous
+  mutate(response_direction_corrected = case_when(
+                                                  final_rating == 11 ~ "m",
+                                                  final_rating > 11 ~ "h",
+                                                  final_rating < 11 ~ "l"),
+         is.correct = case_when(
+           response_direction_corrected == "l" & stimuli_direction == "n" ~ 1,
+           response_direction_corrected == "h" & stimuli_direction == "p" ~ 1,
+           .default = 0)) |> 
+  # include trials when slider was not moved?
+  #filter(stimuli_direction != 0) |>
+  filter(delta_t != 0) |> 
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # make delta_f_raw into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
+         # make response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # make response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
+         # make response_f absolute without sign differences
+         response_f_rel_abs = abs(response_f_rel),
+         # relative to target
+         response_f_prop = response_f_rel / delta_f,
+         # calculate actual f0 of presented tonal onset
+         presented_f = 150 + delta_f_raw,
+         presented_f_st = 12 * log2(presented_f/150),
+         # make is.correct as.numeric
+         correct = as.numeric(is.correct),
+         # make part ID a char
+         participant = as.character(participant)
+         )
+
+```
+
+# Accuracy of pitch direction
+
+The data will be complex and allow to quantitatively explore many different relationships. For the confirmatory part (and in turn sample size justification), I propose to stick to focusing on the central relationship between pitch perception and the two acoustic dimensions that are manipulated: Duration of pitch change between onset and level tone (`delta_t`) and the extend of pitch change between onset and level tone (`delta_f`). To simplify, we test the hypotheses that `delta_t` and `delta_f` affect the accuracy of perceiving the correct pitch direction (`correct`).
+
+## Descriptively
+
+A first descriptive look at those relationships:
+
+```{r}
+
+# aggregate over delta_f, delta_t and accuracy
+xdata_agg_all <- xdata |> 
+  group_by(delta_f, delta_t) |> 
+  summarise(correct = mean(correct, na.rm = TRUE))
+  
+# Plot empirical accuracy
+descriptive_plot_01 <- 
+  ggplot(data = xdata_agg_all, 
+       aes(x = delta_t,
+           y = correct,
+           color = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_path(lwd = 1.5, color = "black") +
+  geom_path(lwd = 1.5) +
+  geom_point(size = 3, color = "black") + 
+  geom_point(size = 2.5) + 
+  #scale_color_viridis(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(breaks = seq(0,250,50)) +
+  facet_wrap(delta_f ~ ., ncol = 2) +
+  scale_color_viridis_d(option="viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "observed accuracy of pitch direction\n",
+       color = "delta f0\n") +
+  theme_minimal()
+  
+descriptive_plot_01
+
+```
+
+As dependent on stimulus_type:
+
+```{r}
+
+# aggregate over delta_f, delta_t, stimuli_type and accuracy
+xdata_agg_all <- xdata |> 
+  group_by(delta_f, delta_t) |> 
+  summarise(correct = mean(correct, na.rm = TRUE))
+  
+# Plot empirical accuracy
+descriptive_plot_02 <- 
+  ggplot(data = xdata_agg_all, 
+       aes(x = delta_t,
+           y = correct,
+           color = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_path(lwd = 1.5, color = "black") +
+  geom_path(lwd = 1.5) +
+  geom_point(size = 3, color = "black") + 
+  geom_point(size = 2.5) + 
+  #scale_color_viridis(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(breaks = seq(0,250,50)) +
+  facet_grid(delta_f ~ stimuli_type) +
+  scale_color_viridis_d(option="viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "observed accuracy of pitch direction\n",
+       color = "delta f0\n") +
+  theme_minimal()
+  
+descriptive_plot_02
+
+```
+
+## Modelling relationship
+
+Hypotheses are tested, and relevant parameters are estimated through the following model:
+
+`correct ~ delta_t * delta_f + (delta_t_c * delta_f_c | participant))`
+
+Predictors are contrast-coded.
+
+### Statistical predictions:
+
+(1) There is evidence that the coefficient `delta_t` is larger than 0.
+
+(2) There is evidence that the coefficient `delta_f` is larger than 0.
+
+```{r}
+
+# scale and contrast code predictors
+xdata <- xdata |> 
+  mutate(delta_f_c = delta_f - mean(delta_f),
+         delta_t_c = delta_t - mean(delta_t),
+         # linguistic vs. non-linguistic
+         stimuli_type_c = ifelse(stimuli_type == "tone", -0.5, 0.5))
+
+# formula
+formula = bf(correct ~ delta_t_c * delta_f_c + (delta_t_c * delta_f_c | participant))
+
+# run model
+logistic_model <- brm(
+  formula,
+  data = xdata,
+  file = "../models/model_glm_TR",
+  family = "bernoulli",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,0.5), class = "Intercept"),
+            prior(normal(0,0.1), class = "b"),
+            prior(lkj(1), class = "cor"),
+            prior(normal(0,1), class = "sd")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 12)
+  )
+
+
+# comment TR: with interacting predictors in random slopes, computationally rather expensive (~15 mins)
+print(logistic_model, digits = 5)
+
+plot(logistic_model, variables = "^b_") # okay
+
+# extract posteriors
+posteriors <- logistic_model |> 
+  spread_draws(c(b_Intercept, b_delta_t_c, b_delta_f_c, `b_delta_t_c:delta_f_c`)) |> 
+  ## add sequences of delta_f and delta_t for prediction
+  mutate(delta_t = list(seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2)),
+         delta_f = list(seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))) |> 
+  unnest(delta_t) |> 
+  unnest(delta_f) |> 
+  # calculate combinations
+  mutate(preds = plogis(b_Intercept + b_delta_t_c*delta_t + b_delta_f_c*delta_f + 
+                          `b_delta_t_c:delta_f_c`*delta_t*delta_f)) |> 
+    pivot_longer(cols = starts_with("preds"),
+                 names_to = "factors") |> 
+    select(-(1:6)) |> 
+    separate(col = factors, into = c(NA, "stimuli_type"),  sep = "_") |> 
+    group_by(delta_t, delta_f) |> 
+    summarise(pred_m = mean(value, na.rm = TRUE),
+              pred_0025 = quantile(value, prob = 0.025),
+              pred_0975 = quantile(value, prob = 0.975)) |> 
+  mutate(delta_t = delta_t + mean(xdata$delta_t),
+         delta_f = delta_f + mean(xdata$delta_f),
+         above_chance = ifelse(pred_0025 > 0.5, "above chance", "below chance"))
+  
+# plot
+#model_plot_02 <- 
+  ggplot(data = posteriors, 
+       aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(#aes(colour = above_chance),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = correct),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = correct, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
+  scale_color_manual(values = c("black", "darkred")) +
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nperceptual accuracy of pitch direction\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal()
+
+```
+
+### Florian's Lapse model
+
+```{r}
+
+# Florians suggestion:
+ # estimate guess
+formula_FJ = bf(correct ~ guess + (1 -  guess - inv_logit(lambda)) * inv_logit(eta),
+             # set guess rate to 1/3
+             guess ~ 0 + offset(1/3),
+             lambda ~ 1,
+             eta ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant),
+             family = bernoulli(link="identity"),
+             nl = TRUE)
+
+logistic_model_lapse <- brm(
+  formula_FJ,
+  data = xdata,
+  #family = bernoulli(link='identity'),
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(
+  prior(student_t(3, 0, 2.5), class = "b", nlpar = "eta"),
+  prior(lkj(1), class = "cor"),
+  prior(student_t(3, 0, 2.5), class = "sd", nlpar = "eta"),
+  # Setting intercept prior to weakly regularizing around 5% lapses)
+  prior(student_t(3, -2.944439, 2.5), class = "b", coef = "Intercept", nlpar = "lambda")),
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 10)
+  )
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+logistic_model_lapse |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(#aes(colour = above_chance),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = correct),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = correct, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nperceptual accuracy of pitch direction\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal()
+
+```
+
+### Logistic of no direction response
+
+```{r}
+
+# Florian: Any chance that you could run a standard mixed-effects logistic regression but with response = “no direction”? I think that will shed light on the concern that I’m hinting at in my previous email. I predict that they are never below chance in terms of the direction. But they have a certain held-out prob mass for “no direction”, and that prob mass decreases for longer slope and bigger differences. So it’s a mixture model: respond “no direction” unless there is sufficient perceptual evidence of directionality; once there is respond based on perceptual evidence about that directionality.
+
+xdata <- xdata |> 
+  mutate(no_direction = ifelse(response_direction_corrected == "m", 1, 0))
+
+xdata_agg_all <- xdata |> 
+  group_by(delta_f, delta_t) |> 
+  summarise(no_direction = mean(no_direction, na.rm = TRUE))
+
+# formula
+formula_no = bf(no_direction ~ delta_t_c * delta_f_c + (delta_t_c * delta_f_c | participant))
+
+# run model
+logistic_model_no_direction <- brm(
+  formula_no,
+  data = xdata,
+  file = "../models/model_glm_no_direction_TR",
+  family = "bernoulli",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,0.5), class = "Intercept"),
+            prior(normal(0,0.1), class = "b"),
+            prior(lkj(1), class = "cor"),
+            prior(normal(0,1), class = "sd")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 12)
+  )
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+logistic_model_no_direction |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f))) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(#aes(colour = above_chance),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_all,
+             aes(y = no_direction),
+             size = 3) + 
+  geom_point(data = xdata_agg_all,
+             aes(y = no_direction, 
+                 fill = as.factor(delta_f)),
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_wrap( ~ delta_f, ncol = 2) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability for no direction\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal()
+
+```
+
+### Multinomial model
+
+```{r}
+
+# fit model to ternary response
+xdata_agg_viz <- xdata |> 
+  mutate(response_direction_corrected = as.factor(response_direction_corrected)) |> 
+  group_by(delta_f, delta_t,response_direction_corrected) |> 
+  count() |> 
+  group_by(delta_f, delta_t) |> 
+  mutate(pred_m = n/sum(n),
+         ".category" = response_direction_corrected) 
+
+
+# formula
+formula_cat = bf(response_direction_corrected ~ delta_t_c + delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+
+# run model (takes 20mins)
+multinomial_model <- brm(
+  formula_cat,
+  data = xdata,
+  file = "../models/model_glm_cat_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,0.3), class = "b", dpar = "mul"),
+            prior(normal(0,0.3), class = "b", dpar = "mum"),
+            prior(lkj(1), class = "cor")), 
+  control = list(adapt_delta=0.9,
+                 max_treedepth = 10)
+  )
+
+# model convergence?
+plot(multinomial_model, variables = "^b_") # okay
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+multinomial_model |> 
+    epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c, .category) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t = delta_t_c + mean(xdata$delta_t),
+         delta_f = delta_f_c + mean(xdata$delta_f)) |> 
+  ggplot(aes(x = as.numeric(delta_t),
+           y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f),
+           group = .category)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(aes(),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_viz,
+             size = 3) + 
+  geom_point(data = xdata_agg_viz,
+             pch = 21,
+             size = 3) + 
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_grid(.category ~ delta_f) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability of different responses\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal() +
+  theme(strip.text.y = element_text(angle = 0))
+
+```
+
+### Multinomial model with correct/incorrect and middle
+
+```{r}
+
+xdata <- xdata |> 
+  mutate(correct_m = ifelse(response_direction_corrected == "m", "no direction", 
+         ifelse(correct == 1, "correct", "incorrect")))
+
+
+# fit model to ternary response
+xdata_agg_viz <- xdata |> 
+  mutate(correct_m = as.factor(correct_m)) |> 
+  group_by(delta_f, delta_t, correct_m) |> 
+  count() |> 
+  group_by(delta_f, delta_t) |> 
+  rename("delta_f_c" = delta_f,
+         "delta_t_c" = delta_t) |> 
+  mutate(pred_m = n/sum(n),
+         ".category" = correct_m) 
+
+
+# formula
+formula_cat_2 = bf(correct_m ~ delta_t_c * delta_f_c + (delta_t_c + delta_f_c | participant), family = "categorical")
+
+formula_cat_2_mo = bf(correct_m ~ mo(delta_t) + mo(delta_f), family = "categorical")
+
+# run model (takes 20mins)
+multinomial_model_2 <- brm(
+  formula_cat_2,
+  data = xdata,
+  #file = "../models/model_glm_cat2_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,1), class = "b", dpar = "muincorrect"),
+            prior(normal(0,1), class = "b", dpar = "munodirection"),
+            prior(lkj(1), class = "cor")), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 10)
+  )
+
+
+# run model with mo
+multinomial_model_2_mo <- brm(
+  formula_cat_2_mo,
+  data = xdata,
+  file = "../models/model_glm_cat2_mo_TR",
+  # given that the predictors units are rather small, we pick relative narrow prior widths
+  prior = c(prior(normal(0,1), class = "b", dpar = "muincorrect"),
+            prior(normal(0,1), class = "b", dpar = "munodirection")
+            #prior(lkj(1), class = "cor"),
+            #prior(normal(0,1), class = "sd", dpar = "muincorrect"),
+            #prior(normal(0,1), class = "sd", dpar = "munodirection")
+            ), 
+  control = list(adapt_delta=0.99,
+                 max_treedepth = 10)
+  )
+
+# model convergence?
+plot(multinomial_model_2, variables = "^b_") # okay
+
+newdata <- expand_grid(delta_t_c = seq(min(xdata$delta_t_c), max(xdata$delta_t_c), 2),
+                       delta_f_c = seq(min(xdata$delta_f_c), max(xdata$delta_f_c), 10))
+
+multi_pred <- multinomial_model_2 |> 
+    epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_c, delta_f_c, .category) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  mutate(delta_t_c = delta_t_c + mean(xdata$delta_t),
+         delta_f_c = delta_f_c + mean(xdata$delta_f)) 
+
+
+multi_pred |>  
+  ggplot(aes(x = as.numeric(delta_t_c),
+             y = pred_m,
+           #group = as.numeric(delta_t),
+           fill = as.factor(delta_f_c),
+           group = .category)) +
+  geom_hline(yintercept = 0.5,
+             lty = "dashed") +
+  geom_ribbon(aes(ymin = pred_0025,
+                  ymax = pred_0975),
+              color = NA,
+              alpha = 0.5) +
+  geom_line(aes(),
+            colour = "black",
+            lwd = 2) +
+  geom_point(data = xdata_agg_viz,
+             aes(x = delta_t_c, fill = as.factor(delta_f_c)),
+             size = 3) +
+  geom_point(data = xdata_agg_viz,
+             aes(x = delta_t_c,  fill = as.factor(delta_f_c)),
+             pch = 21,
+             size = 3) +
+  scale_fill_viridis_d(option="viridis") +
+  scale_y_continuous(limits = c(0,1),
+                     breaks = seq(0,1,.25)) +
+  scale_x_continuous(limits = c(40,250),
+                     breaks = c(40,80,120,250)) +
+  facet_grid(.category ~ delta_f_c) +
+  labs(x = "\nslope duration in ms",
+       y = "posterior predictions for\nprobability of different responses\n",
+       fill = "delta f0\n") +
+  guides(color = "none") +
+  theme_minimal() +
+  theme(strip.text.y = element_text(angle = 0))
+
+```
+
+### Inference
+
+We assess hypotheses (1) and (2) through Bayes Factor using the Savage-Dickey approximation (within the `bayesfactor` package):
+
+```{r}
+
+bayesfactor_pointnull(posterior = logistic_model,
+                      null = 0)
+
+# evidence for beta > 0 is overwhelming (BF = >10000)
+# moderate evidence against an effect of the interaction btw.
+# This inferential procedure would have to be sensitivity tested against different priors, but looks like an overwhelmingly large effect
+
+```
+
+### Questions:
+
+-   What to do with those trials that are neither higher or lower but chosen to be level? Options: (1) categorical GLM with three response options (2) remove level responses, and run logistic regression or (3) consider level responses incorrect, and run logistic regression (currently implemented).
+-   Can we test against anything meaningful that is not point-zero in this case?
+
+# Continuous dependent variable
+
+## Exploration of landscape
+
+We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
+
+```{r}
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+descriptive_plot_03 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  # geom_line(data = xdata_agg, 
+  #           aes(group = interaction(participant, delta_f_raw_st)),
+  #         alpha = 0.2) +
+  geom_point(data = xdata_agg_all) +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+
+descriptive_plot_03
+
+```
+
+Slight non-linear relationship with delta_t. Let's look at it in 3-dimensional space:
+
+```{r}
+
+# set up matrix
+z_matrix <- matrix(xdata_agg_all$response_f_rel_st, nrow = 8, ncol = 6, byrow = TRUE)
+
+x_axis <- unique(xdata_agg_all$delta_t)
+y_axis <- unique(xdata_agg_all$delta_f_raw_st)
+
+plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix, 
+        type = "surface",
+        colors = 'RdPu') |> 
+  layout( scene = list(
+    xaxis = list(title = 'Onset Duration (ms)', tickvals = x_axis, ticktext = x_axis),
+    yaxis = list(title = 'Onset Frequency in STs', tickvals = list(-5,-4,-3,-2,-1,0,1,2,3,4,5), ticktext = list(-5,-4,-3,-2,-1,0,1,2,3,4,5)),
+    zaxis = list(title = 'Response STs')
+  ))
+
+```
+
+## Statistical model
+
+Relevant parameters are estimated through the following model (following Marton's parametric suggestion) \# need justification for our model choice
+
+`response_f_rel_st \~ a + b \* (( (delta_t - x0) / (x_max - x0) )\^inv_logit(c))`
+
+a = assesses intercept, i.e. perceived pitch differences at `delta_t = 0` and `delta_f_raw_st = 0`
+
+b = assesses linear relationship of `delta_t` and `response_f_rel_st` and how this relationship is modulated by `delta_f_raw_st`
+
+c = delta_f_raw_st \# assess non-linear relationship of `delta_t` and `response_f_rel_st` and how this relationship is modulated by `delta_f_raw_st`
+
+x0 \# ?
+
+```{r}
+
+# add ceiling
+xdata <- xdata |> 
+  mutate(
+  #x_min=min(delta_t),
+  x_max = max(delta_t)
+)
+
+# TO DO: Explore other functions?
+## gumbel function?
+## Naka-rushton?
+
+# Model of the following basic structure:
+# y ~ a + b*x^
+
+# TO DO: Justify priors
+# TO DO: random slopes for all these parameters? Computationally feasible?
+
+# run model
+parametric_model <- brm(
+  bf(response_f_rel ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
+     x0 ~ 1,
+     nl = T),
+  data = xdata,
+  file = "../models/model_nl_TR",
+  prior = prior(normal(0,0.5), nlpar = "a")+
+          prior(normal(0,0.5), nlpar = "b")+
+          prior(normal(0,5), nlpar = "x0")+
+          prior(normal(0,1), nlpar = "c", lb = 0, ub = 1),
+  control = list(adapt_delta=0.99)
+  )
+
+# comment TR: takes 90 seconds on my machine, so computationally expensive
+parametric_model
+# model predicts mostly linear relationship
+
+# posterior predictive check
+pp_check(parametric_model)
+# 1. not truly continuous measure, problem?
+# 2. regardless, distribution looks spikier than gaussian
+
+# check chains
+plot(parametric_model, pars = "^b_") # okay
+
+xdata$preds <- posterior_summary(posterior_epred(parametric_model))[,1]
+
+# Visualize
+model_plot_01 <- 
+ggplot(data = xdata, 
+       aes(x = delta_t,
+           y = preds,
+           color = delta_f_raw,
+           group = delta_f_raw)) +
+  geom_line(lwd = 2.5, color = "black") +
+  geom_line(lwd = 2) +
+   scale_y_continuous(limits = c(-20,20),
+                     breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "predicted response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+model_plot_01
+
+data_v_model <- descriptive_plot_03 / model_plot_01 +
+  plot_layout(guides = 'collect',
+              axes = 'collect')
+
+data_v_model
+
+# pretty decent fit
+
+```
+
+In 3D:
+
+```{r}
+
+xdata_agg_pred <- xdata |> 
+  group_by(delta_t, delta_f_raw_st) |> 
+  summarise(preds = mean(preds))
+
+# set up matrix
+z_matrix <- matrix(xdata_agg_pred$preds, nrow = 6, ncol = 8, byrow = TRUE)
+
+x_axis <- unique(xdata_agg_pred$delta_f_raw_st)
+y_axis <- unique(xdata_agg_pred$delta_t)
+
+plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix, 
+        type = "surface",
+        colors = 'RdPu') |> 
+  layout( scene = list(
+    yaxis = list(title = 'Onset Duration (ms)', tickvals = y_axis, ticktext = y_axis),
+    xaxis = list(title = 'Onset Frequency in STs', tickvals = list(-5,-4,-3,-2,-1,0,1,2,3,4,5), ticktext = list(-5,-4,-3,-2,-1,0,1,2,3,4,5)),
+    zaxis = list(title = 'Response STs')
+  ))
+
+```
+
+
+## Pitch proportions
+
+We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
+
+```{r}
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_prop, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_prop, na.rm = TRUE))
+  
+descriptive_plot_03 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  # geom_line(data = xdata_agg, 
+  #           aes(group = interaction(participant, delta_f_raw_st)),
+  #         alpha = 0.2) +
+  # geom_line(data = xdata_agg_all,
+  #            aes(group = delta_f_raw),
+  #            lwd = 2.5,
+  #           color = "black", alpha = 0.5) +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             lwd = 2, 
+            alpha = 0.5) +
+  geom_point(data = xdata_agg_all, size = 3, color = "black") +
+  geom_point(data = xdata_agg_all, size = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed ST perceived pitch proportion\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+
+descriptive_plot_03
+
+```
+
+```{r}
+
+
+# add ceiling
+xdata <- xdata |> 
+  mutate(
+  #x_min=min(delta_t),
+  x_max = max(delta_t),
+  # glissando threshold according to the 2/3 rule
+  glissando = 2/3 * 0.75
+)
+
+# TO DO: Explore other functions?
+## exponential
+formula <- bf(response_f_prop ~ reference + (ceiling - reference) * exp(-k),
+     reference ~ 0,
+     ceiling ~ 0.4,
+     k ~ 1 + delta_t,
+     nl = T)
+
+## gumbel function?
+
+## Naka-rushton?
+
+# Model of the following basic structure:
+# y ~ a + b*x^
+formula <- bf(response_f_prop ~ a + b * (( (delta_t - x0) / (x_max - x0) )^inv_logit(c)),
+     a ~ 1,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
+     x0 ~ 1 ,
+     nl = T)
+
+# TO DO: Justify priors
+# TO DO: random slopes for all these parameters? Computationally feasible?
+
+# run model
+parametric_model <- brm(
+  formula,
+  data = xdata,
+  #file = "../models/model_prop_nl",
+  prior = prior(normal(0,2), nlpar = "a")+
+          prior(normal(0,2), nlpar = "b")+
+          prior(normal(0,2), nlpar = "x0")+
+          prior(normal(0,1), nlpar = "c", lb = 0, ub = 1),
+  control = list(adapt_delta=0.99)
+  )
+
+# comment TR: takes 90 seconds on my machine, so computationally expensive
+parametric_model
+# model predicts mostly linear relationship
+
+# posterior predictive check
+pp_check(parametric_model)
+# 1. not truly continuous measure, problem?
+# 2. regardless, distribution looks spikier than gaussian
+
+# check chains
+plot(parametric_model, pars = "^b_") # okay
+
+newdata <- expand_grid(delta_t = seq(40,250,10),
+                       delta_f_raw = c(-40,-30,-20,-10,10,20,30,40),
+                       x_max = 250)
+
+
+# Visualize
+model_plot_01 <- parametric_model |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t, delta_f_raw) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975),
+              threshold = ifelse(pred_m > 0.25, "yes", "no")) |> 
+ggplot(aes(x = delta_t,
+           y = pred_m,
+           group = delta_f_raw,
+           color = delta_f_raw
+           )
+       ) +
+  geom_line(lwd = 2.5) +
+  geom_hline(yintercept = 0.25, 
+             lty = "dashed",
+             colour = "black") +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "predicted proportion of perceived pitch to hear pitch\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+model_plot_01
+
+data_v_model <- descriptive_plot_03 + model_plot_01 +
+  plot_layout(guides = 'collect',
+              axes = 'collect')
+
+data_v_model
+
+# pretty decent fit
+
+```
