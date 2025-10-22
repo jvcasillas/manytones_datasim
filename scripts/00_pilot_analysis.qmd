@@ -117,7 +117,7 @@ mypriors <- c(
 simple_model_d_f0_priors <- brm(
   formula_d_f0,
   data = xdata_red,
-  #file = "../models/model_simple_df0_priors",
+  file = "../models/model_simple_df0_priors",
   family = student,
   #family = gaussian,
   sample_prior = "only",
@@ -165,7 +165,7 @@ simple_model_d_f0_priors <- brm(
 simple_model_d_f0 <- brm(
   formula_d_f0,
   data = xdata_red,
-  #file = "../models/model_simple_df0",
+  file = "../models/model_simple_df0",
   #family = gaussian,
   family = student,
   seed = 123,
@@ -183,7 +183,7 @@ simple_model_d_f0
 plot(simple_model_d_f0) # looks like chains are well mixed
 
 # check samples against data
-pp_check(simple_model_d_f0, ndraws = 100) # hm looks like the data are more peaky, like due to the over representation of "no-direction" responses. 
+pp_check(simple_model_d_f0, ndraws = 100) # pretty good
 
 
 ```
@@ -232,16 +232,16 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
 # bf against point zero
 bayesfactor_pointnull(posterior = simple_model_d_f0,
                       null = 0)
-# 5.48 
+# 3.60 
 
 # bf against point zero, setting ordered restriction for one-sided
 bayesfactor_parameters(simple_model_d_f0, direction = ">")
-# 10.8
+# 7.42
 
 
 # bf directional 
 hyp1 <- hypothesis(simple_model_d_f0, "delta_f_raw1 > 0")
 hyp1$hypothesis[[6]]
-# BF = 194
+# BF = 204
 
 ```
