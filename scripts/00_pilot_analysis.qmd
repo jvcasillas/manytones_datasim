@@ -4,7 +4,8 @@ format: html
 editor: visual
 ---
 
-```{r setup}
+```{r}
+#| label: setup
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
@@ -24,7 +25,8 @@ options(mc.cores = parallel::detectCores())
 
 Wrangle the data, generate derivatives for the analysis.
 
-```{r data_wrangling}
+```{r}
+#| label: data_wrangling
 
 # load in data 2025/09/11
 xdata <- read_csv("../data/merged_250911.csv")
@@ -63,9 +65,10 @@ xdata <- xdata |>
 
 # Estimates for simplified model
 
-\(1\) $$y_{ij} = 𝛽_0 + 𝛽_{1xij} + u_{0j} + u_{1xij} + 𝜖_{ij}$$
+\(1\) $$y_{ij} = \beta_0 + \beta_{1xij} + u_{0j} + u_{1xij} + \epsilon_{ij}$$
 
-```{r model_specs}
+```{r}
+#| label: model_specs
 
 # target condition for delta_f
 target_cond = 20
@@ -126,7 +129,8 @@ simple_model_d_f0_priors <- brm(
 
 # Check priors
 
-```{r plot_priors}
+```{r}
+#| label: plot_priors
 
 # plot priors
   simple_model_d_f0_priors |> 
@@ -151,7 +155,8 @@ simple_model_d_f0_priors <- brm(
 
 # Run model
 
-```{r run_model}
+```{r}
+#| label: run_model
 
 # Run model with generous amount of iterations
 simple_model_d_f0 <- brm(
@@ -182,7 +187,8 @@ pp_check(simple_model_d_f0, ndraws = 100) # pretty good
 
 # Plot estimates
 
-```{r plot_model}
+```{r}
+#| label: plot_model
 
 # create new data to predict
 newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
@@ -219,7 +225,8 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
 
 # Inference using Bayes Factor (through Savage-Dickey)
 
-```{r inference}
+```{r}
+#| label: inference
 
 # bf against point zero
 bayesfactor_pointnull(posterior = simple_model_d_f0,
