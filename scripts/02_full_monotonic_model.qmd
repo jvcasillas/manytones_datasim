@@ -226,4 +226,5 @@ data_v_model <- descriptive_plot / model_plot +
               axes = 'collect')
 
 data_v_model
+
 ```

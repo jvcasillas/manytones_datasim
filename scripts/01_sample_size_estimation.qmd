@@ -103,7 +103,7 @@ sigma = vc$residual__.sd.Estimate[1]
 my_sim_data <- function(
 # participants
 subj_n = 50,    # number of subjects per language
-rep_n = 3,      # number of repetitions
+rep_n = 2,      # number of repetitions (planned to reduce to 2)
 
 # predictors
 # lang_n = 4   # number of languages
@@ -150,7 +150,7 @@ my_sim_data() |>
 #| label: wrapper_around_model
 
 # model formula
-formula_sim = bf(response ~ delta_f + (delta_f | subject))
+formula_sim = bf(response ~ delta_f + (delta_f | subject), nu = 4)
 
 # my priors (default for now plus weakly regularizing for beta)
 mypriors <- c(
@@ -164,14 +164,14 @@ mypriors <- c(
               )
 
 # number of sims per specification (target = 500?)
-n_sims <- 100
+n_sims <- 200
 
 # Container for model fits
 bfs_list <- list()
 subject_list <- list()
 
 # Define subject number for different models (10-50)
-subjects <- as.list(seq(10,50,5))
+subjects <- as.list(seq(30,70,5))
 
 # Loop through priors and fit models
 for (i in seq_along(subjects)) {
@@ -186,7 +186,7 @@ for (i in seq_along(subjects)) {
     iter = 4000,
     warmup = 2000,
     control = list(adapt_delta = 0.99),
-    family = gaussian(),
+    family = student(),
     prior = mypriors
   )
 
@@ -223,14 +223,22 @@ subject_list_df <- as.data.frame(subject_list) |>
 loop_results$subj_n = subject_list_df$subj_n
 
 # save results
-write.csv(loop_results, "../data/BF_sample_size_calculation.csv")
+#write.csv(loop_results, "../data/BF_sample_size_calculation.csv")
+```
 
+
+```{r plot_results}
+
+
+loop_results <- read_csv("../data/BF_sample_size_calculation.csv")
+  
 # plot results
 loop_agg <- loop_results |> 
   group_by(subj_n) |> 
   summarise(BF_l10 = quantile(BF, prob = 0.05),
             BF = median(BF)) 
   
+BF_sample_plot <- 
 ggplot(data = loop_agg,
        aes(x = subj_n, y = BF,
            fill = BF)) +
@@ -254,5 +262,16 @@ ggplot(data = loop_agg,
        y = "Bayes Factor for beta > 0 over beta < 0\n",
        fill = "Bayes Factor for beta > 0\n") +
   theme_minimal()
+
+BF_sample_plot
+
+# save
+ggsave(filename = "../plots/BF_sample_sim.png", 
+       plot = BF_sample_plot,
+       width = 200, 
+       height = 100,
+       units = "mm", 
+       bg = "transparent",
+       dpi = 500)
 
 ```

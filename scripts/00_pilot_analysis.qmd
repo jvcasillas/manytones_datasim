@@ -4,7 +4,8 @@ format: html
 editor: visual
 ---
 
-```{r setup}
+```{r}
+#| label: setup
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
@@ -24,7 +25,8 @@ options(mc.cores = parallel::detectCores())
 
 Wrangle the data, generate derivatives for the analysis.
 
-```{r data_wrangling}
+```{r}
+#| label: data_wrangling
 
 # load in data 2025/09/11
 xdata <- read_csv("../data/merged_250911.csv")
@@ -63,17 +65,10 @@ xdata <- xdata |>
 
 # Estimates for simplified model
 
-In order to replicate the original findings by Hombert (1975) and to enable relevant and sensitive exploratory analyses (see below), we need a sample size N that allows us to provide strong evidence that participants perceive the direction of the pitch perturbation (i.e. falling vs. rising).
+\(1\) $$y_{ij} = \beta_0 + \beta_{1xij} + u_{0j} + u_{1xij} + \epsilon_{ij}$$
 
-The literature on Cf0 speech production suggests that at least languages undergoing tonogenesis tend to have relatively large Δf0 like for example Korean (Han & Weitzman, 1970 report 42 Hz, Jun, 1996 reports 58 Hz; Choi, 2002 reports 36-47 Hz). Our sample should guarantee that, for a conservatively chosen combination of Δf0 and Δt that reflects pessimistic conditions under which tonogenesis can occur, we can reliably detect evidence for differential pitch responses. We thus chose the shortest Δt (40 ms) and compared Δf0 of -20 against 20 Hz.
-
-Comparing only two conditions allows us to simplify the assumptions of the inferential model and increase the computational feasibility of our simulation-based approach to estimate sample size. At the same time, we reduce the number of observations based on which we make this inference (i.e. not pooling across conditions) which drastically decreases sensitivity and therefore allows for a conservative estimate.
-
-We predict pitch responses (Hz) based on the contrast-coded factorial difference (-0.5 vs. 0.5) of Δf0 = 20 Hz against Δf0 = -20 Hz alongside a by-subject random intercept and slope for the predictor. The model assumes a Gaussian error distribution (see 1).
-
-\(1\) $$y_{ij} = 𝛽_0 + 𝛽_{1xij} + u_{0j} + u_{1xij} + 𝜖_{ij}$$
-
-```{r model_specs}
+```{r}
+#| label: model_specs
 
 # target condition for delta_f
 target_cond = 20
@@ -117,7 +112,7 @@ mypriors <- c(
 simple_model_d_f0_priors <- brm(
   formula_d_f0,
   data = xdata_red,
-  #file = "../models/model_simple_df0_priors",
+  file = "../models/model_simple_df0_priors",
   family = student,
   #family = gaussian,
   sample_prior = "only",
@@ -134,7 +129,8 @@ simple_model_d_f0_priors <- brm(
 
 # Check priors
 
-```{r plot_priors}
+```{r}
+#| label: plot_priors
 
 # plot priors
   simple_model_d_f0_priors |> 
@@ -159,13 +155,14 @@ simple_model_d_f0_priors <- brm(
 
 # Run model
 
-```{r run_model}
+```{r}
+#| label: run_model
 
 # Run model with generous amount of iterations
 simple_model_d_f0 <- brm(
   formula_d_f0,
   data = xdata_red,
-  #file = "../models/model_simple_df0",
+  file = "../models/model_simple_df0",
   #family = gaussian,
   family = student,
   seed = 123,
@@ -183,14 +180,15 @@ simple_model_d_f0
 plot(simple_model_d_f0) # looks like chains are well mixed
 
 # check samples against data
-pp_check(simple_model_d_f0, ndraws = 100) # hm looks like the data are more peaky, like due to the over representation of "no-direction" responses. 
+pp_check(simple_model_d_f0, ndraws = 100) # pretty good
 
 
 ```
 
 # Plot estimates
 
-```{r plot_model}
+```{r}
+#| label: plot_model
 
 # create new data to predict
 newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
@@ -227,21 +225,22 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
 
 # Inference using Bayes Factor (through Savage-Dickey)
 
-```{r inference}
+```{r}
+#| label: inference
 
 # bf against point zero
 bayesfactor_pointnull(posterior = simple_model_d_f0,
                       null = 0)
-# 5.48 
+# 3.60 
 
 # bf against point zero, setting ordered restriction for one-sided
 bayesfactor_parameters(simple_model_d_f0, direction = ">")
-# 10.8
+# 7.42
 
 
 # bf directional 
 hyp1 <- hypothesis(simple_model_d_f0, "delta_f_raw1 > 0")
 hyp1$hypothesis[[6]]
-# BF = 194
+# BF = 204
 
 ```
