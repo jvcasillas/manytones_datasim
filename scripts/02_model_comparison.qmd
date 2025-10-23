@@ -1,5 +1,5 @@
 ---
-title: "02_full_monotonic_model"
+title: "02_model_comparison"
 format: html
 editor: visual
 ---
@@ -136,6 +136,7 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 ## Linear model
 
 ```{r}
+#| label: linear_model
 
 # contrast code
 
@@ -181,6 +182,7 @@ pp_check(linear_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
 ## Monotonic predictors
 
 ```{r}
+#| label: monotonic_model
 
 # code predictors as ordered factors
 xdata$delta_f_raw_o <- factor(xdata$delta_f_raw, 
@@ -231,6 +233,7 @@ pp_check(mono_model, ndraws = 100, type = "dens_overlay")
 ## GAMs
 
 ```{r}
+#| label: gam
 
 # make interaction term?}
 
@@ -277,14 +280,15 @@ pp_check(gam_model, ndraws = 100, type = "dens_overlay")
 # leave one out model comparison
 loo_comp <- loo_compare(list(linear = loo(linear_model), monotonic = loo(mono_model))) # linear 
 # Bayes Factor model comparison
-## Need to rerun models with much more samples
+## Need to rerun models with much more samples and saving all vars
 linear_bridge <- bridge_sampler(linear_model, silent = T)
 mono_bridge <- bridge_sampler(mono_model, silent = T)
 bf_bridge <- bridgesampling::bf(mono_bridge, linear_bridge)
+bf_bridge
 
 ```
 
-## Plot model
+## Plot model (currently mono)
 
 ```{r}
 
