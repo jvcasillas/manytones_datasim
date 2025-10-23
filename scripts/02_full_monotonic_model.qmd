@@ -5,6 +5,7 @@ editor: visual
 ---
 
 ```{r setup}
+#| label: setup
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
@@ -24,7 +25,8 @@ options(mc.cores = parallel::detectCores())
 
 Wrangle the data, generate derivatives for the analysis.
 
-```{r data_wrangling}
+```{r}
+#| label: data_wrangling
 
 # load in data 2025/09/11
 xdata <- read_csv("../data/merged_250911.csv")
@@ -59,11 +61,12 @@ xdata <- xdata |>
 
 ```
 
-## Exploration of landscape
-
+# Exploration of landscape
+## 2D
 We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
 
 ```{r}
+#| label: descriptive_exploration
 
 xdata_agg <- xdata |> 
   group_by(delta_f_raw, delta_t, participant) |> 
@@ -98,14 +101,16 @@ ggplot(data = xdata_agg,
        color = "pitch difference") +
   theme_minimal()
   
-
 descriptive_plot
 
 ```
 
+## 3D
+
 Slight non-linear relationship with delta_t. Let's look at it in 3-dimensional space:
 
 ```{r}
+#| label: descriptive_exploration_2
 
 # set up matrix
 z_matrix <- matrix(xdata_agg_all$response_f_rel_st, nrow = 8, ncol = 6, byrow = TRUE)
@@ -124,7 +129,51 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 
 ```
 
-## Model with monotonic predictors
+# Modelling
+## Linear model
+```{r}
+
+# contrast code
+
+# brms formula (full)
+formula_linear = bf(response_f_rel ~ delta_t * delta_f_raw + (delta_t * delta_f_raw | participant), nu = 4)
+
+
+# my priors 
+mypriors <- c(
+              prior(cauchy(0, 1), class = "b"),
+              prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
+              prior(cauchy(0, 5), class = "sd", lb = 0),
+              prior(lkj(1), class = "cor")
+              )
+
+# Run model with
+linear_model <- brm(
+  formula_linear,
+  data = xdata,
+  file = "../models/linear_model",
+  family = student,
+  #family = gaussian,
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.95,
+                 max_treedepth = 12)
+  )
+
+# check caterpillar
+plot(linear_model) # mixes well
+
+# check samples against data
+pp_check(linear_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
+
+# "issue" with discrete responses. however we do not expect this to bias estimates
+# to keep models computationally feasible, we refrain from using discrete version of the student-t regression
+
+```
+
+## Monotonic predictors
 
 ```{r}
 
@@ -137,10 +186,7 @@ xdata$delta_t_o <- factor(xdata$delta_t,
                           ordered = TRUE)
 
 # brms formula (full)
-# formula_mono = bf(response_f_rel ~ mo(delta_f_raw) * mo(delta_t) + (delta_f_raw * delta_t | participant))
-
-# start with simple
-formula_mono = bf(response_f_rel ~ mo(delta_t_o) * mo(delta_f_raw_o))
+formula_mono = bf(response_f_rel ~ mo(delta_f_raw_o) * mo(delta_t_o) + (mo(delta_f_raw_o) * mo(delta_t_o) | participant), nu = 4)
 
 # get priors
 get_prior(formula_mono, xdata)
@@ -148,36 +194,76 @@ get_prior(formula_mono, xdata)
 # my priors 
 mypriors <- c(
               prior(cauchy(0, 10), class = "b"),
-              prior(cauchy(0, 10), class = "Intercept")#,
-              #dirichlet(c(1,1,1,1,1)), class = "simo", coef = "modelta_t1",
-             # prior(cauchy(0, 10), class = "sd", lb = 0),
-             # prior(lkj(1), class = "cor")
+              prior(cauchy(0, 10), class = "Intercept"),
+              prior(cauchy(0, 10), class = "sd", lb = 0),
+              prior(lkj(1), class = "cor")
               )
 
 # Run model with gaussian error term
-mono_model_d_f0 <- brm(
+mono_model <- brm(
   formula_mono,
   data = xdata,
   file = "../models/mono_model",
-  #family = student,
-  family = gaussian,
+  family = student,
   seed = 123,
   iter = 4000,
   warmup = 2000,
   prior = mypriors, 
-  control = list(adapt_delta = 0.95,
-                 max_treedepth = 10)
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 12)
   )
 
 # check caterpillar
-plot(mono_model_d_f0) # mixes well
+plot(mono_model) # mixes well
 
 # check samples against data
-pp_check(mono_model_d_f0, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
-
+pp_check(mono_model, ndraws = 100, type = "dens_overlay") 
 # "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
 
 ```
+
+# GAMs
+
+```{r}
+
+# make interaction term?
+
+# brms formula (full)
+
+# get priors
+
+# my priors 
+mypriors <- c(
+              prior(cauchy(0, 10), class = "b"),
+              prior(cauchy(0, 10), class = "Intercept"),
+              prior(cauchy(0, 10), class = "sd", lb = 0),
+              prior(lkj(1), class = "cor")
+              )
+
+# Run model with gaussian error term
+gam_model <- brm(
+  formula_gam,
+  data = xdata,
+  file = "../models/gam_model",
+  family = student,
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 12)
+  )
+
+# check caterpillar
+plot(gam_model) # mixes well
+
+# check samples against data
+pp_check(gam_model, ndraws = 100, type = "dens_overlay") 
+# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+
+```
+
+
 
 ## Plot model
 
@@ -191,7 +277,7 @@ newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
                        )
 
 # Visualize
-prediction_mono <- mono_model_d_f0 |> 
+prediction_mono <- mono_model |> 
   epred_draws(newdata = newdata,
               re_formula = NA) |> 
     group_by(delta_t_o, delta_f_raw_o) |> 
