@@ -9,7 +9,7 @@ editor: visual
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux)
+pacman::p_load(bridgesampling, brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR)
 
 # Set the current working directory to the one where this file is
 current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
@@ -62,7 +62,9 @@ xdata <- xdata |>
 ```
 
 # Exploration of landscape
+
 ## 2D
+
 We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
 
 ```{r}
@@ -130,7 +132,9 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 ```
 
 # Modelling
+
 ## Linear model
+
 ```{r}
 
 # contrast code
@@ -157,6 +161,7 @@ linear_model <- brm(
   seed = 123,
   iter = 4000,
   warmup = 2000,
+  save_pars = save_pars(all = TRUE),
   prior = mypriors, 
   control = list(adapt_delta = 0.95,
                  max_treedepth = 12)
@@ -208,6 +213,7 @@ mono_model <- brm(
   seed = 123,
   iter = 4000,
   warmup = 2000,
+  save_pars = save_pars(all = TRUE),
   prior = mypriors, 
   control = list(adapt_delta = 0.99,
                  max_treedepth = 12)
@@ -222,11 +228,11 @@ pp_check(mono_model, ndraws = 100, type = "dens_overlay")
 
 ```
 
-# GAMs
+## GAMs
 
 ```{r}
 
-# make interaction term?
+# make interaction term?}
 
 # brms formula (full)
 
@@ -249,6 +255,7 @@ gam_model <- brm(
   seed = 123,
   iter = 4000,
   warmup = 2000,
+  save_pars = save_pars(all = TRUE),
   prior = mypriors, 
   control = list(adapt_delta = 0.99,
                  max_treedepth = 12)
@@ -263,7 +270,19 @@ pp_check(gam_model, ndraws = 100, type = "dens_overlay")
 
 ```
 
+# Model comparison
 
+```{r}
+
+# leave one out model comparison
+loo_comp <- loo_compare(list(linear = loo(linear_model), monotonic = loo(mono_model))) # linear 
+# Bayes Factor model comparison
+## Need to rerun models with much more samples
+linear_bridge <- bridge_sampler(linear_model, silent = T)
+mono_bridge <- bridge_sampler(mono_model, silent = T)
+bf_bridge <- bridgesampling::bf(mono_bridge, linear_bridge)
+
+```
 
 ## Plot model
 
