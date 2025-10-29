@@ -9,7 +9,9 @@ editor: visual
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(bridgesampling, brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR)
+pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, 
+               #bridgesampling, 
+               bayestestR)
 
 # Set the current working directory to the one where this file is
 current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
@@ -148,7 +150,7 @@ formula_linear = bf(response_f_rel ~ delta_t * delta_f_raw + (delta_t * delta_f_
 mypriors <- c(
               prior(cauchy(0, 1), class = "b"),
               prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
-              prior(cauchy(0, 5), class = "sd", lb = 0),
+              prior(cauchy(0, 10), class = "sd", lb = 0),
               prior(lkj(1), class = "cor")
               )
 
@@ -201,7 +203,7 @@ get_prior(formula_mono, xdata)
 # my priors 
 mypriors <- c(
               prior(cauchy(0, 10), class = "b"),
-              prior(cauchy(0, 10), class = "Intercept"),
+              prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
               prior(cauchy(0, 10), class = "sd", lb = 0),
               prior(lkj(1), class = "cor")
               )
@@ -230,26 +232,81 @@ pp_check(mono_model, ndraws = 100, type = "dens_overlay")
 
 ```
 
+## Exponential
+
+```{r}
+#| label: exponential_model
+
+# brms formula
+formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^inv_logit(c)),
+     a ~ 1,
+     b ~ delta_f_raw,
+     c ~ delta_f_raw,
+     x0 ~ 1,
+     nl = T)
+
+# get priors
+get_prior(formula_exp, xdata)
+
+# my priors 
+mypriors <- c(
+              prior(cauchy(0, 10), class = "b", nlpar = "a"),
+              prior(cauchy(0, 10), class = "b", nlpar = "b"),
+              prior(cauchy(0, 10), class = "b", nlpar = "c"),
+              prior(cauchy(0, 10), class = "b", nlpar = "x0")#,
+              #prior(cauchy(0, 10), class = "sd", lb = 0),
+              #prior(lkj(1), class = "cor")
+              )
+
+# Run model with gaussian error term
+exp_model <- brm(
+  formula_exp,
+  data = xdata,
+  file = "../models/exp_model",
+  family = student,
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  save_pars = save_pars(all = TRUE),
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 12)
+  )
+
+# check caterpillar
+plot(exp_model) # mixes well
+
+# check samples against data
+pp_check(exp_model, ndraws = 100, type = "dens_overlay") 
+# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+
+```
+
 ## GAMs
 
 ```{r}
 #| label: gam
 
-# make interaction term?}
-
-# brms formula (full)
+# brms formula?
+formula_gam = bf(response_f_rel ~ delta_t * delta_f_raw +
+                   s(delta_t, bs = "bs", k = 6) +
+                   s(delta_f_raw, bs = "bs", k = 6) +
+                 t2(delta_t, delta_f_raw),
+                 nu = 4)
 
 # get priors
+get_prior(formla_gam, xdata)
 
 # my priors 
 mypriors <- c(
               prior(cauchy(0, 10), class = "b"),
               prior(cauchy(0, 10), class = "Intercept"),
-              prior(cauchy(0, 10), class = "sd", lb = 0),
-              prior(lkj(1), class = "cor")
+              prior(cauchy(0, 10), class = "sds")#,
+             # prior(cauchy(0, 10), class = "sd", lb = 0),
+             # prior(lkj(1), class = "cor")
               )
 
-# Run model with gaussian error term
+# Run model 
 gam_model <- brm(
   formula_gam,
   data = xdata,
@@ -265,11 +322,11 @@ gam_model <- brm(
   )
 
 # check caterpillar
-plot(gam_model) # mixes well
+plot(gam_model) # does not mix well
 
 # check samples against data
 pp_check(gam_model, ndraws = 100, type = "dens_overlay") 
-# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+# assuming values way to spread
 
 ```
 
@@ -278,7 +335,9 @@ pp_check(gam_model, ndraws = 100, type = "dens_overlay")
 ```{r}
 
 # leave one out model comparison
-loo_comp <- loo_compare(list(linear = loo(linear_model), monotonic = loo(mono_model))) # linear 
+loo_comp_1 <- loo_compare(list(linear = loo(linear_model), monotonic = loo(mono_model))) # linear vs. monotonic
+loo_comp_2 <- loo_compare(list(linear = loo(mono_model), monotonic = loo(gam_model))) # linear vs. monotonic
+
 # Bayes Factor model comparison
 ## Need to rerun models with much more samples and saving all vars
 linear_bridge <- bridge_sampler(linear_model, silent = T)
@@ -295,24 +354,31 @@ bf_bridge
 #xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
 
 # create new data for prediction
-newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
-                       delta_f_raw_o = unique(xdata$delta_f_raw_o)
+# newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
+#                        delta_f_raw_o = unique(xdata$delta_f_raw_o)
+#                        )
+
+newdata <- expand_grid(delta_t = unique(xdata$delta_t),
+                       delta_f_raw = unique(xdata$delta_f_raw)
                        )
 
+
 # Visualize
-prediction_mono <- mono_model |> 
+prediction_gam <- gam_model |> 
+#prediction_mono <- mono_model |> 
   epred_draws(newdata = newdata,
               re_formula = NA) |> 
-    group_by(delta_t_o, delta_f_raw_o) |> 
+    #group_by(delta_t_o, delta_f_raw_o) |> 
+    group_by(delta_t, delta_f_raw) |> 
     summarise(pred_m = mean(.epred, na.rm = TRUE),
               pred_0025 = quantile(.epred, prob = 0.025),
               pred_0975 = quantile(.epred, prob = 0.975)) |> 
-  rename(delta_t = delta_t_o,
-         delta_f_raw = delta_f_raw_o) |> 
+  # rename(delta_t = delta_t_o,
+  #        delta_f_raw = delta_f_raw_o) |> 
   mutate(delta_t = as.numeric(as.character(delta_t)),
          delta_f_raw = as.numeric(as.character(delta_f_raw)))
 
-model_plot <- prediction_mono |> 
+model_plot <- prediction_gam |> 
   ggplot(aes(x = delta_t,
              y = pred_m,
              color = delta_f_raw,
