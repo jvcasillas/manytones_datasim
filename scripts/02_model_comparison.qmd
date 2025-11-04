@@ -237,33 +237,34 @@ pp_check(mono_model, ndraws = 100, type = "dens_overlay")
 ```{r}
 #| label: exponential_model
 
-# brms formula
-formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^inv_logit(c)),
+# brms formula (Marton)
+formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^c),
      a ~ 1,
      b ~ delta_f_raw,
      c ~ delta_f_raw,
      x0 ~ 1,
+     nu = 4,
      nl = T)
 
 # get priors
-get_prior(formula_exp, xdata)
+get_prior(formula_exp, family = "student", xdata)
 
 # my priors 
 mypriors <- c(
-              prior(cauchy(0, 10), class = "b", nlpar = "a"),
-              prior(cauchy(0, 10), class = "b", nlpar = "b"),
-              prior(cauchy(0, 10), class = "b", nlpar = "c"),
-              prior(cauchy(0, 10), class = "b", nlpar = "x0")#,
-              #prior(cauchy(0, 10), class = "sd", lb = 0),
+              prior(cauchy(0, 100), nlpar = "a"),
+              prior(cauchy(0, 100), nlpar = "theta"),
+              prior(cauchy(0, 100), nlpar="omega")#,
+              #prior(cauchy(0, 30), nlpar = "x0"),
+              #prior(cauchy(0, 10), class = "sd", lb = 0)#,
               #prior(lkj(1), class = "cor")
               )
 
-# Run model with gaussian error term
+# Run model with student error term
 exp_model <- brm(
   formula_exp,
   data = xdata,
   file = "../models/exp_model",
-  family = student,
+  #family = student,
   seed = 123,
   iter = 4000,
   warmup = 2000,
@@ -277,7 +278,7 @@ exp_model <- brm(
 plot(exp_model) # mixes well
 
 # check samples against data
-pp_check(exp_model, ndraws = 100, type = "dens_overlay") 
+pp_check(exp_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50) 
 # "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
 
 ```
@@ -336,7 +337,7 @@ pp_check(gam_model, ndraws = 100, type = "dens_overlay")
 
 # leave one out model comparison
 loo_comp_1 <- loo_compare(list(linear = loo(linear_model), monotonic = loo(mono_model))) # linear vs. monotonic
-loo_comp_2 <- loo_compare(list(linear = loo(mono_model), monotonic = loo(gam_model))) # linear vs. monotonic
+loo_comp_2 <- loo_compare(list(linear = loo(mono_model), monotonic = loo(exp_model))) # exp vs. monotonic
 
 # Bayes Factor model comparison
 ## Need to rerun models with much more samples and saving all vars
@@ -347,38 +348,38 @@ bf_bridge
 
 ```
 
-## Plot model (currently mono)
+# Plot model (currently mono)
 
 ```{r}
 
 #xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
 
 # create new data for prediction
-# newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
-#                        delta_f_raw_o = unique(xdata$delta_f_raw_o)
-#                        )
-
-newdata <- expand_grid(delta_t = unique(xdata$delta_t),
-                       delta_f_raw = unique(xdata$delta_f_raw)
+newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
+                       delta_f_raw_o = unique(xdata$delta_f_raw_o)
                        )
+
+# newdata <- expand_grid(delta_t = unique(xdata$delta_t),
+#                        delta_f_raw = unique(xdata$delta_f_raw)
+#                        )
 
 
 # Visualize
-prediction_gam <- gam_model |> 
-#prediction_mono <- mono_model |> 
+#prediction_exp <- exp_model |> 
+prediction_mono <- mono_model |> 
   epred_draws(newdata = newdata,
               re_formula = NA) |> 
-    #group_by(delta_t_o, delta_f_raw_o) |> 
-    group_by(delta_t, delta_f_raw) |> 
+    group_by(delta_t_o, delta_f_raw_o) |> 
+    #group_by(delta_t, delta_f_raw) |> 
     summarise(pred_m = mean(.epred, na.rm = TRUE),
               pred_0025 = quantile(.epred, prob = 0.025),
               pred_0975 = quantile(.epred, prob = 0.975)) |> 
-  # rename(delta_t = delta_t_o,
-  #        delta_f_raw = delta_f_raw_o) |> 
+  rename(delta_t = delta_t_o,
+         delta_f_raw = delta_f_raw_o) |>
   mutate(delta_t = as.numeric(as.character(delta_t)),
          delta_f_raw = as.numeric(as.character(delta_f_raw)))
 
-model_plot <- prediction_gam |> 
+model_plot <- prediction_mono |> 
   ggplot(aes(x = delta_t,
              y = pred_m,
              color = delta_f_raw,
