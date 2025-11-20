@@ -133,6 +133,66 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 
 ```
 
+## Individual differences
+
+```{r}
+#| label: descriptive_exploration_individuals
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+
+# plot delta_t against response
+subject_plot_1 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = delta_f_raw)) +
+  geom_line(aes(group = delta_f_raw),
+            lwd = 1) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+   facet_wrap(~participant, 
+             ncol = 6, 
+             scales = "free") + 
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+  
+# plot delta_f_raw against response
+subject_plot_2 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_f_raw,
+           y = response_f_rel,
+           color = delta_t)) +
+  geom_line(aes(group = delta_t),
+            lwd = 1) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  facet_wrap(~participant, 
+             ncol = 6, 
+             scales = "free") + 
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\npitch difference in Hz",
+       y = "average observed pitch response in Hz\n",
+       color = "slope duration") +
+  theme_minimal()
+
+subject_plot_1
+subject_plot_2
+
+```
+
+
 # Modelling
 
 ## Linear model
@@ -238,10 +298,10 @@ pp_check(mono_model, ndraws = 100, type = "dens_overlay")
 #| label: exponential_model
 
 # brms formula (Marton)
-formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^c),
+formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^inv_logit(c)),
      a ~ 1,
-     b ~ delta_f_raw,
-     c ~ delta_f_raw,
+     b ~ delta_f_raw + (1|participant),
+     c ~ delta_f_raw + (1|participant),
      x0 ~ 1,
      nu = 4,
      nl = T)
@@ -251,9 +311,9 @@ get_prior(formula_exp, family = "student", xdata)
 
 # my priors 
 mypriors <- c(
-              prior(cauchy(0, 100), nlpar = "a"),
-              prior(cauchy(0, 100), nlpar = "theta"),
-              prior(cauchy(0, 100), nlpar="omega")#,
+              #prior(cauchy(0, 10), nlpar = "a"),
+              prior(cauchy(0, 10), nlpar = "b"),
+              prior(cauchy(0, 10), nlpar = "c")#,
               #prior(cauchy(0, 30), nlpar = "x0"),
               #prior(cauchy(0, 10), class = "sd", lb = 0)#,
               #prior(lkj(1), class = "cor")
@@ -264,7 +324,7 @@ exp_model <- brm(
   formula_exp,
   data = xdata,
   file = "../models/exp_model",
-  #family = student,
+  family = student,
   seed = 123,
   iter = 4000,
   warmup = 2000,
