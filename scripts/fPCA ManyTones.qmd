@@ -1,0 +1,468 @@
+---
+title: "fPCA ManyTones"
+author: "Giulio Severijnen"
+format: html
+editor: visual
+---
+
+## Introduction
+
+This script runs a functional PCA on the data of the ManyTones project. The analyses are based on the following tutorial: <https://github.com/uasolo/FPCA-phonetics-workshop/tree/master>
+
+Quick reminder on the data:
+
+-   We have six different time steps (40,60,80,100,120,250 ms)
+
+-   We have 8 different F0 conditions (-40,-30,-20,-10,10,20,30,40 Hz)
+
+-   On each combination, we have a response F0. This is which F0 participants perceived on that trial
+
+In the fPCA, we try to find the components that explain the data in a time-varying manner. In our case, the time variable is the delta_t. So we can examine which components explain the data on each time-frequency combination.
+
+Moreover, we want to do this for every participant to examine whether there are individual differences.
+
+```{r initialization}
+
+library(fda)
+library(funData)
+library(MFPCA)
+library(tidyverse)
+library(emmeans)
+library(mgcv)
+library(itsadug)
+
+#install.packages("devtools")
+#devtools::install_github("uasolo/landmarkregUtils")
+library(landmarkregUtils)
+
+mytheme <- theme_light() +
+  theme(text = element_text(size = 16))
+
+```
+
+## Data wrangling
+
+```{r load data}
+# load in data 2025/09/11
+
+xdata <- read.csv("../data/merged_250911.csv", sep = ",")
+
+
+# derive some relevant measurements
+xdata <- xdata |> 
+  # remove erroneous data points
+  filter(delta_t != 0) |> 
+  # derive derivates
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # centralise
+         delta_f_raw_c = delta_f_raw - mean(delta_f_raw),
+         # transform delta_f_raw Hz into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
+         # transform response_f relative to baseline 150hz      
+         response_f_rel = response_f - 150,
+         # transform response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
+         # adjust response direction for absolute delta_f values
+         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
+         # transform response_f_rel_sign into STs (reference 150Hz)
+         response_f_rel_sign_st = 12 * log2((150-response_f_rel_sign)/150),
+         # calculate response proportional to delta_f
+         response_f_prop = response_f_rel / delta_f_raw,
+         # calculate response proportional to delta_f in STs
+         response_f_prop_st = response_f_rel_st / delta_f_raw_st,
+         # make participant ID a character vector
+         participant = as.character(participant)
+         )
+
+# To do: exclusion criteria
+
+```
+
+Just to visualize the data and what we want to examine:
+
+```{r plot curves}
+# To visualize data, redo the plot taken from the script 02_full_monotonic_model:
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participant) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+
+descriptive_plot <- 
+  ggplot(data = xdata_agg, 
+         aes(x = delta_t,
+             y = response_f_rel,
+             color = delta_f_raw)) +
+  geom_point(data = xdata_agg_all) +
+  geom_line(data = xdata_agg_all,
+            aes(group = delta_f_raw),
+            lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg_all,
+            aes(group = delta_f_raw),
+            lwd = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+
+
+descriptive_plot
+```
+
+So you could think of wanting to extract the components that underlie these curves, and then also for every participant separately
+
+That would mean that for every participant, there is a curve for all the different delta(F0) and delta_t values, which would look something like this:
+
+```{r plot indiv ppts}
+
+plot_curves <- 
+  ggplot(data = xdata_agg, 
+         aes(x = delta_t,
+             y = response_f_rel,
+             color = delta_f_raw)) +
+  geom_point(data = xdata_agg)+
+  geom_line(data = xdata_agg,
+            aes(group = interaction(participant,delta_f_raw)),
+            lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg,
+            aes(group = interaction(participant,delta_f_raw)),
+            lwd = 2) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "pitch difference") +
+  theme_minimal()
+
+
+# Would look something like this
+plot_curves
+```
+
+## fPCA single subject
+
+First, we have to convert our dataframe to the appropriate format to run the fPCA. This dataframe must contain:
+
+-   A time-varying variable. Note this doesn't have to be literal 'time', but in our case is the delta_t
+
+-   A response variable: in our case the response F0
+
+-   A curveID: This is a unique number you assign to every observation of the same curve.
+
+As a first try, let's run an fPCA on a single subject.
+
+```{r fPCA single subj}
+# Let's think about what the curveID should be when we have only 1 participant. The variable that separates the different curves at this point is the delta_F0 variable. That is, we have 8 different curves that vary for delta_t. These curves are identified based on the delta_f.
+
+# Let's try an fPCA with delta_f as curveID
+
+curves_singlePPT <- xdata_agg %>% 
+  ungroup() %>% 
+  filter(participant == "3608") %>% 
+  mutate(delta_f_raw = as.factor(as.character(delta_f_raw)))
+
+# build a funData object
+curvesFunSinglePPT <-long2irregFunData(curves_singlePPT, id = "delta_f_raw", time = "delta_t", value = "response_f_rel") %>% 
+  as.funData()
+
+
+# Compute FPCA
+fpca_single <- PACE(curvesFunSinglePPT, nbasis = 6)
+
+
+# This works! Now see if we can plot the curves
+
+# var of PC scores 
+fpca_single$values # eigenvalues of covariance operator
+fpca_single$scores %>% apply(2, var) # same 
+
+# Prop of explained var
+round(fpca_single$values  / sum( fpca_single$values) , digits = 3)
+
+# scores st. dev.
+sdFun <- fpca_single$values %>% sqrt()
+# PC curves to be plotted
+nPC <- 1
+PCcurves <- expand_grid(PC = 1:nPC,
+                        fractionOfStDev = seq(-1, 1, by=.25)) %>%
+  group_by(PC, fractionOfStDev) %>%
+  reframe(
+    funData2long1(fpca_single$mu + fractionOfStDev * sdFun[PC] * fpca_single$functions[PC],
+                  time = "time", value = "y")
+  )
+
+# Plot
+
+ggplot(PCcurves) +
+  aes(x = time, y = y, group = fractionOfStDev, color = fractionOfStDev) +
+  geom_line() +
+  scale_color_gradient2(low = "blue", mid = "grey", high = "orangered",
+                        breaks = c(-1, 0 , 1)) +
+  facet_wrap(~ PC, nrow = 1,
+             labeller = labeller(PC = ~ str_glue("PC{.x}"))) +
+  labs(color = expression(frac(s[k], sigma[k]))) +
+  xlab("registered time") +
+  geom_line(data = PCcurves %>% filter(fractionOfStDev == 0), color = 'black', linewidth = 1.2) +
+  mytheme +
+  theme(legend.position = "bottom")
+
+```
+
+This participant has only one PC, which nicely captures the pattern in the data (the interaction between delta_t and delta_f).
+
+But more importantly, the fPCA works. Now we can ramp it up to the entire dataset!
+
+## fPCA all subjects
+
+Again, we have to define a curveID. However, in this case, it cannot be delta_f because then we would average over all participants instead of having 8 unique curves for each participant.
+
+So, we have to set a unique curveID for every participant and every delta_f condition
+
+```{r assign curve ID}
+# Note, there is an NA in the participant variable. Change this to a random number
+xdata_agg[is.na(xdata_agg$participant),]$participant <- "342234"
+
+# We use the interaction function to assign a unique curveID
+curves_all <- xdata_agg %>% 
+  ungroup() %>% 
+  mutate(curveID = as.integer(interaction(participant,delta_f_raw))) %>% 
+  mutate(curveID = as.factor(curveID))
+```
+
+```{r run fPCA}
+# build a funData object
+curvesFun <-long2irregFunData(curves_all, id = "curveID", time = "delta_t", value = "response_f_rel") %>% 
+  as.funData()
+
+
+# Compute FPCA
+# Note that the default for b-spline basis function for smoothing = 10, so our data is smaller than 10. Set it to 6
+fpca <- PACE(curvesFun, nbasis = 6)
+
+# how many PCs?
+fpca$npc
+
+
+# var of PC scores 
+fpca$values # eigenvalues of covariance operator
+fpca$scores %>% apply(2, var) # same 
+
+# Prop of explained var
+round(fpca$values  / sum( fpca$values) , digits = 3)
+
+# scores st. dev.
+sdFun <- fpca$values %>% sqrt()
+# PC curves to be plotted
+nPC <- 2
+PCcurves <- expand_grid(PC = 1:nPC,
+                        fractionOfStDev = seq(-1, 1, by=.25)) %>%
+  group_by(PC, fractionOfStDev) %>%
+  reframe(
+    funData2long1(fpca$mu + fractionOfStDev * sdFun[PC] * fpca$functions[PC],
+                  time = "time", value = "y")
+  )
+# Plot
+ggplot(PCcurves) +
+  aes(x = time, y = y, group = fractionOfStDev, color = fractionOfStDev) +
+  geom_line() +
+  scale_color_gradient2(low = "blue", mid = "grey", high = "orangered",
+                        breaks = c(-1, 0 , 1)) +
+  facet_wrap(~ PC, nrow = 1,
+             labeller = labeller(PC = ~ str_glue("PC{.x}"))) +
+  labs(color = expression(frac(s[k], sigma[k]))) +
+  xlab("registered time") +
+  geom_line(data = PCcurves %>% filter(fractionOfStDev == 0), color = 'black', linewidth = 1.2) +
+  mytheme +
+  theme(legend.position = "bottom")
+
+
+```
+
+Now we see two PCs. The first one again captures the overall interaction between delta_f and delta_t. The second one is a bit hard to interpret to me. Why should we observe a switch at 170 Hz?
+
+Importantly, we did manage to get the fPCA running. But the challenge would be to interpret the components.
+
+## Individual differences
+
+A final part of this analysis is to examine the PCs of every individual participant. That is, does every participants show this same pattern in the components? Or does every participant even show 2 components in the first place?
+
+To do this, we are going to loop through every participant and run a separate fPCA on their data.
+
+Note: I'm not sure whether this is the best approach. We're essentially reducing the data that the fPCA can use by subsetting for each participant, so it is likely that the models will struggle with separating signal from noise.
+
+Unfortunately, my experience with fPCA is limited so if someone has a better alternative, please do let me know.
+
+```{r fPCA loop through ppts}
+
+# This bit loops over the participants and runs a separate fPCA on the data from each subject. Then, the resulting PC curves are stored in a new dataframe:PCcurves_all
+
+
+pptList <- unique(curves_all$participant)
+
+for (ppt in 1:length(pptList)){
+  tmpCurves <- curves_all %>% 
+    filter(participant == pptList[ppt])
+  
+  tmpCurvesFun <-long2irregFunData(tmpCurves, id = "delta_f_raw", time = "delta_t", value = "response_f_rel") %>% 
+    as.funData()
+  
+  
+  # Compute FPCA
+  fpca <- PACE(tmpCurvesFun, nbasis = 6)
+  
+  
+  
+  # scores st. dev.
+  sdFun <- fpca$values %>% sqrt()
+  # PC curves to be plotted
+  nPC <- fpca$npc
+  PCcurves <- expand_grid(PC = 1:nPC,
+                          fractionOfStDev = seq(-1, 1, by=.25)) %>%
+    group_by(PC, fractionOfStDev) %>%
+    reframe(
+      funData2long1(fpca$mu + fractionOfStDev * sdFun[PC] * fpca$functions[PC],
+                    time = "time", value = "y")
+    )
+  PCcurves$participant <- pptList[ppt]
+  
+  if (ppt == 1){
+  
+   PCcurves_all <- PCcurves
+      
+  } else{
+    
+    PCcurves_all <- rbind(PCcurves_all, PCcurves)
+  }
+}
+```
+
+```{r plots}
+
+# Participants vary as to how many components came out of the analyses (1, 2, or 3) 
+table(PCcurves_all$participant,PCcurves_all$PC)
+
+# Subset the data and plot them separately
+
+ppts_1PC <- PCcurves_all %>% 
+  group_by(participant) %>% 
+  filter(!any(PC == 2) & !any(PC == 3)) %>% 
+  select(participant) %>% 
+  unique()
+
+ppts_2PC <- PCcurves_all %>% 
+  group_by(participant) %>% 
+  filter(any(PC == 1) & any(PC == 2) & !any(PC == 3)) %>% 
+  select(participant) %>% 
+  unique()
+
+ppts_3PC <- PCcurves_all %>% 
+  group_by(participant) %>% 
+  filter(any(PC == 1) & any(PC == 2) & any(PC == 3)) %>% 
+  select(participant) %>% 
+  unique()
+```
+
+```{r 1 PC plots}
+
+
+PCcurves_1PC <- PCcurves_all %>% 
+  filter(participant %in% ppts_1PC$participant)
+
+for (pageN in c(1:3)){
+p <- ggplot(PCcurves_1PC) +
+  aes(x = time, y = y, group = fractionOfStDev, color = fractionOfStDev) +
+  geom_line() +
+  scale_color_gradient2(low = "blue", mid = "grey", high = "orangered",
+                        breaks = c(-1, 0 , 1)) +
+  ggforce::facet_grid_paginate(participant~ PC,
+             labeller = labeller(PC = ~ str_glue("PC{.x}")), 
+             ncol = 1, nrow = 5, page = pageN) +
+  labs(color = expression(frac(s[k], sigma[k]))) +
+  xlab("registered time") +
+  geom_line(data = PCcurves %>% filter(fractionOfStDev == 0), color = 'black', linewidth = 1.2) +
+  mytheme +
+  theme(legend.position = "bottom")
+
+print(p)
+}
+
+```
+
+```{r 2PC plots}
+
+
+PCcurves_2PC <- PCcurves_all %>% 
+  filter(participant %in% ppts_2PC$participant)
+
+for (pageN in c(1:3)){
+p <- ggplot(PCcurves_2PC) +
+  aes(x = time, y = y, group = fractionOfStDev, color = fractionOfStDev) +
+  geom_line() +
+  scale_color_gradient2(low = "blue", mid = "grey", high = "orangered",
+                        breaks = c(-1, 0 , 1)) +
+  ggforce::facet_grid_paginate(participant~ PC,
+                               labeller = labeller(PC = ~ str_glue("PC{.x}")), 
+                               ncol = 2, nrow = 4, page = pageN) +
+  labs(color = expression(frac(s[k], sigma[k]))) +
+  xlab("registered time") +
+  geom_line(data = PCcurves %>% filter(fractionOfStDev == 0), color = 'black', linewidth = 1.2) +
+  mytheme +
+  theme(legend.position = "bottom")
+
+print(p)
+}
+```
+
+```{r 3 PCs plots}
+
+
+PCcurves_3PC <- PCcurves_all %>% 
+  filter(participant %in% ppts_3PC$participant) %>% 
+  filter(participant != "34234")
+
+ggplot(PCcurves_3PC) +
+  aes(x = time, y = y, group = fractionOfStDev, color = fractionOfStDev) +
+  geom_line() +
+  scale_color_gradient2(low = "blue", mid = "grey", high = "orangered",
+                        breaks = c(-1, 0 , 1)) +
+  ggforce::facet_grid_paginate(participant~ PC,
+                               labeller = labeller(PC = ~ str_glue("PC{.x}")), 
+                               ncol = 3, nrow = 4, page = 1) +
+  labs(color = expression(frac(s[k], sigma[k]))) +
+  xlab("registered time") +
+  geom_line(data = PCcurves %>% filter(fractionOfStDev == 0), color = 'black', linewidth = 1.2) +
+  mytheme +
+  theme(legend.position = "bottom")
+
+```
+
+As you can see from the plots above, participants vary in the number of PCs but also the exact shape of them.
+
+## Take aways
+
+We seem to have a working method that can extract the interaction between delta_t and delta_f. Moreover, the fPCA can extract additional components, which can be other cues that participants use to perceive the data.
+
+However, the challenge here is to interpret the components. What exactly does the second or third component reflect? Are these just noise? Or is it something 'real'?
+
+Moreover, how reliable are these components? In the results on the full dataset, we see that PC1 explains most of the variance in the data. So how important can we consider the second component to be? In the individual differences analyses, the fPCAs are trained on very little data, so here the noise issue becomes even bigger.
+
+Perhaps an option for the main analyses could be to separate the data according to different grouping variables (e.g., native language, musical experience etc.). That way we could train the model on more data, and see if we get differences between those groups.
