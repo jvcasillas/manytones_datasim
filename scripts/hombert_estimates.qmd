@@ -138,6 +138,6 @@ knitr::kable(hombert_tbl) |>
 #| label: store-data
 #| include: FALSE
 
-write_csv(hombert, "../data/hombert.csv")
+write_csv(hombert, "../data/derived/hombert.csv")
 
 ```

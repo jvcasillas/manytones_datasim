@@ -44,11 +44,11 @@ options(mc.cores = parallel::detectCores())
 #| label: data_wrangling
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/data_after_exclusion.csv")
+xdata <- read_csv("../data/derived/data_after_exclusion.csv")
 ```
 
-
 # Estimates for simplified model
+
 We estimate a single contrast to make estimate a target sample size that allows us to reliably detect the difference we have found in the pilot.
 
 \(1\) $$y_{ij} = \beta_0 + \beta_{1xij} + u_{0j} + u_{1xij} + \epsilon_{ij}$$
@@ -158,7 +158,7 @@ simple_model_d_f0
 
 ```
 
-The model estimates the critical effect to be `r round(fixef(simple_model_d_f0)[2,1],1)` [95% CrI `r round(fixef(simple_model_d_f0)[2,3],1)` - `r round(fixef(simple_model_d_f0)[2,4],1)`]. Effective sample size looks sufficient, and Rhat values indicate good convergence.
+The model estimates the critical effect to be `r round(fixef(simple_model_d_f0)[2,1],1)` \[95% CrI `r round(fixef(simple_model_d_f0)[2,3],1)` - `r round(fixef(simple_model_d_f0)[2,4],1)`\]. Effective sample size looks sufficient, and Rhat values indicate good convergence.
 
 ```{r}
 #| label: check-diagnostics
@@ -169,7 +169,7 @@ plot(simple_model_d_f0).
 
 ```
 
-Chains also seem to have mixed well. 
+Chains also seem to have mixed well.
 
 ```{r}
 #| label: posterior-predictive-check

@@ -42,7 +42,7 @@ run_if_not_knitting(setwd(current_working_dir))
 #| include: FALSE
 
 # latest pilot from 2026/06/01
-xdata <- read.csv("../data/merged_260601.csv", colClasses = c("response_list" = "character"))
+xdata <- read.csv("../data/raw/merged_260601.csv", colClasses = c("response_list" = "character"))
 
 # before exclusion
 all_data <- nrow(xdata) # 5040
@@ -603,6 +603,6 @@ xdata_wrangled <- xdata_filtered |>
 #| label: write-data
 
 # write clean data after exclusion
-write_csv(xdata_wrangled, "../data/data_after_exclusion.csv")
+write_csv(xdata_wrangled, "../data/derived/data_after_exclusion.csv")
 
 ```

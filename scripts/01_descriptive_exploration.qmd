@@ -40,8 +40,8 @@ run_if_not_knitting(setwd(current_working_dir))
 #| label: data_wrangling
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/data_after_exclusion.csv")
-hombert <- read_csv("../data/hombert.csv")
+xdata <- read_csv("../data/derived/data_after_exclusion.csv")
+hombert <- read_csv("../data/derived/hombert.csv")
 
 ```
 

@@ -43,7 +43,7 @@ run_if_not_knitting(setwd(current_working_dir))
 #| label: data
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/data_after_exclusion.csv") 
+xdata <- read_csv("../data/derived/data_after_exclusion.csv") 
 
 # generate average recovered_f0
 xdata_agg <- xdata |> 
@@ -64,7 +64,6 @@ xdata <- xdata |>
 
 ```
 
-
 ```{r}
 #| label: prepare-for-merf
 
@@ -77,6 +76,7 @@ x.cols <- xdata[,c(3:6,8:15)]
 ```
 
 ## Tuning the MERF
+
 First, map out the parameter combinations you want to test.
 
 ```{r}
@@ -188,4 +188,3 @@ ggplot(imp_df,
   theme_minimal()
 
 ```
-
