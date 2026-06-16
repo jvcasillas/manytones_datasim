@@ -1,0 +1,143 @@
+---
+title: "Extracting Homberts values"
+author: Timo Roettger
+date: 2026-06-06
+format: html
+editor: visual
+---
+
+```{r}
+#| include: FALSE
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+```
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(viridis, tidyverse, knitr, kableExtra)
+
+```
+
+# Data extraction from Hombert (1975)
+
+Hombert (1975) did not provide any data tables beyond a graph. Thus, we visually extracted the values from Hombert (1975, Fig. 3) as a reference for the target comparison. A certain level of uncertainty must be assumed given the error-prone process of extracting values from a printed visualization.
+
+```{r}
+#| label: hombert-values
+#| include: FALSE
+
+hombert <- tibble(
+  target = rep(c(-50,-20,-10,10,20,70), each = 5),
+  slope_dur = rep(c(40,60,100,150,250), times = 6),
+  val = c(119,118,110,99,90,
+        120,119,117,114,108.5,
+        121,119,118.5,117.5,116,
+        122,122.5,125,127,128,
+        123,127,129,132.5,135,
+        135,136,147,156,164.5)
+) |> 
+  mutate(target_raw = target + 120,
+         target_st = 12 * log2(target_raw / 120),
+         val_st = 12 * log2(val / 120))
+```
+
+```{r}
+#| label: hombert-visualization
+#| fig-cap: "Descriptive data from Hombert (1975), visually extracted from Fig. 3."
+
+ggplot(hombert, aes(x = slope_dur, y = val, 
+                    color = as.ordered(target),
+                    group = as.ordered(target))) +
+  geom_path(size = 2, 
+            color = "black") +
+  geom_path(size = 1.5) +
+  geom_point(size = 4, color = "black") + 
+  geom_point(size = 3) + 
+  #scale_color_viridis(option= "viridis") +
+  scale_x_continuous(breaks = c(40,60,100,150,250)) +
+  scale_y_continuous(limits = c(70,190), 
+                     breaks = unique(hombert$target_raw),
+                     labels = unique(hombert$target)) +
+  labs(title = "Recreated data from Hombert (1975)", 
+       subtitle = "visually extracted from figure 3", 
+       x = "slope duration in ms",
+       y = "f0 responses in Hz",
+       color = "f0 perturbation") +
+  guides(color = guide_legend(reverse = TRUE)) +
+  theme_minimal()
+
+```
+
+Since the study used a different reference level for f0 (120 Hz) than our study (150 Hz), we calculated the reported semitone difference from Hombert’s raw values and projected the expected raw difference for our reference value of 150 Hz. These *projected* values are in the following used.
+
+```{r}
+#| label: hombert-projected
+#| fig-cap: "Project data from Hombert (1975), projected onto reference value of 150Hz"
+
+# transform hombert st difference to f0 difference with ref 150
+semitones_to_hz <- function(st, ref = 150) {
+  return(ref * 2^(st / 12))
+}
+
+# apply st projection
+hombert <- hombert |> 
+  mutate(val_projected = semitones_to_hz(val_st))
+
+# plot
+ggplot(hombert, aes(x = slope_dur, y = val_projected - 150, 
+                    color = as.ordered(target),
+                    group = as.ordered(target))) +
+  geom_path(size = 2, 
+            color = "black") +
+  geom_path(size = 1.5) +
+  geom_point(size = 4, color = "black") + 
+  geom_point(size = 3) + 
+  #scale_color_viridis(option= "viridis") +
+  scale_x_continuous(breaks = c(40,60,100,150,250)) +
+  scale_y_continuous(limits = c(-50, 70), 
+                     breaks = unique(hombert$target)) +
+  labs(title = "Projected data from Hombert (1975)", 
+       subtitle = "projected based on a reference f0 value of 150 hz", 
+       x = "slope duration in ms",
+       y = "f0 responses in Hz",
+       color = "f0 perturbation") +
+  guides(color = guide_legend(reverse = TRUE)) +
+  theme_minimal()
+
+```
+
+A table of projected values:
+
+```{r}
+#| label: hombert-table
+#| tbl-cap: "Project data from Hombert (1975), projected onto reference value of 150Hz"
+
+hombert_tbl <- hombert |> 
+  select(target, slope_dur, val_projected) |> 
+  mutate(val_projected = round(val_projected,0)) |> 
+  pivot_wider(id_cols = slope_dur,
+              names_from = target,
+              values_from = val_projected)
+
+
+knitr::kable(hombert_tbl) |> 
+  add_header_above(c(
+    " " = 1,                           # Empty space above the row labels (width = 1 column)
+    "f0 perturbation" = 6      # Your variable name spanning across the 2 split columns
+  ))
+
+```
+
+```{r}
+#| label: store-data
+#| include: FALSE
+
+write_csv(hombert, "../data/hombert.csv")
+
+```

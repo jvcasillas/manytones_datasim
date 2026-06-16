@@ -31,35 +31,7 @@ Wrangle the data, generate derivatives for the analysis.
 #| label: data_wrangling
 
 # load in data 2025/09/11
-xdata <- read_csv("../data/merged_250911.csv")
-
-# derive some relevant measurements
-xdata <- xdata |> 
-  # remove erroneous data points
-  filter(delta_t != 0) |> 
-  # derive derivates
-  mutate(
-         # make delta_f positive / negative
-         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
-         # centralise
-         delta_f_raw_c = delta_f_raw - mean(delta_f_raw),
-         # transform delta_f_raw Hz into STs (reference 150Hz)
-         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
-         # transform response_f relative to baseline 150hz      
-         response_f_rel = response_f - 150,
-         # transform response_f into STs (reference 150Hz)
-         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
-         # adjust response direction for absolute delta_f values
-         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
-         # transform response_f_rel_sign into STs (reference 150Hz)
-         response_f_rel_sign_st = 12 * log2((150-response_f_rel_sign)/150),
-         # calculate response proportional to delta_f
-         response_f_prop = response_f_rel / delta_f_raw,
-         # calculate response proportional to delta_f in STs
-         response_f_prop_st = response_f_rel_st / delta_f_raw_st,
-         # make participant ID a character vector
-         participant = as.character(participant)
-         )
+xdata <- read_csv("../data/data_after_exclusion.csv")
 
 ```
 
@@ -83,19 +55,24 @@ xdata_agg_all <- xdata |>
 descriptive_plot <- 
 ggplot(data = xdata_agg, 
        aes(x = delta_t,
+           #x = delta_f_raw,
            y = response_f_rel,
            color = delta_f_raw)) +
+           #color = delta_t)) +
   geom_point(data = xdata_agg_all) +
   geom_line(data = xdata_agg_all,
              aes(group = delta_f_raw),
+             #aes(group = delta_t),
              lwd = 2.5,
             color = "black") +
   geom_line(data = xdata_agg_all,
              aes(group = delta_f_raw),
+             #aes(group = delta_t),
              lwd = 2) +
   # scale_y_continuous(limits = c(-20,20),
   #                    breaks = seq(-20,20,10)) +
   scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  #scale_x_continuous(breaks = c(unique(xdata$delta_f_raw))) +
   scale_color_viridis_c(option= "viridis") +
   geom_hline(yintercept = 0.25,
              lty = "dashed") +
@@ -115,6 +92,10 @@ Slight non-linear relationship with delta_t. Let's look at it in 3-dimensional s
 
 ```{r}
 #| label: descriptive_exploration_2
+
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw_st, delta_t) |> 
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
 
 # set up matrix
 z_matrix <- matrix(xdata_agg_all$response_f_rel_st, nrow = 8, ncol = 6, byrow = TRUE)
@@ -139,6 +120,9 @@ plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix,
 #| label: descriptive_exploration_individuals
 
 xdata_agg <- xdata |> 
+  #filter(rt != 0) |> 
+  group_by(participant) |>
+  filter(exclude == mean(rt == 0) > 0.2) |> 
   group_by(delta_f_raw, delta_t, participant) |> 
   summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
 
@@ -191,7 +175,6 @@ subject_plot_1
 subject_plot_2
 
 ```
-
 
 # Modelling
 
@@ -246,19 +229,21 @@ pp_check(linear_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
 ```{r}
 #| label: monotonic_model
 
+xdata <- xdata_filtered
+
 # code predictors as ordered factors
 xdata$delta_f_raw_o <- factor(xdata$delta_f_raw, 
                               levels = c(-40,-30,-20,-10,10,20,30,40),
                               ordered = TRUE)
 xdata$delta_t_o <- factor(xdata$delta_t, 
-                          levels = c(40,60,80,100,120,250),
+                          levels = c(20,40,60,80,100,120,140),
                           ordered = TRUE)
 
 # brms formula (full)
 formula_mono = bf(response_f_rel ~ mo(delta_f_raw_o) * mo(delta_t_o) + (mo(delta_f_raw_o) * mo(delta_t_o) | participant), nu = 4)
 
 # get priors
-get_prior(formula_mono, xdata)
+get_prior(formula_mono, xdata, family = "student")
 
 # my priors 
 mypriors <- c(
@@ -289,6 +274,58 @@ plot(mono_model) # mixes well
 # check samples against data
 pp_check(mono_model, ndraws = 100, type = "dens_overlay") 
 # "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+
+```
+
+## scam
+
+```{r}
+#| label: scam_model
+
+xdata <- xdata_filtered
+
+
+
+# brms formula (full)
+formula_scam = bf(response_f_rel ~ delta_t * delta_f_raw +
+                    s(delta_t, bs = "mpi") +
+                    s(delta_f_raw, bs = "mpi"))
+
+# get priors
+get_prior(formula_scam, xdata, family = "student")
+
+# my priors 
+mypriors <- c(
+              prior(cauchy(0, 10), class = "b"),
+              prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
+              prior(cauchy(0, 10), class = "sds", lb = 0)#,
+              #prior(lkj(1), class = "cor")
+              )
+
+# Run model with gaussian error term
+scam_model <- brm(
+  formula_scam,
+  data = xdata,
+  #file = "../models/scam_model",
+  family = gaussian,
+  #family = student,
+  seed = 123,
+  iter = 4000,
+  warmup = 2000,
+  save_pars = save_pars(all = TRUE),
+  prior = mypriors, 
+  control = list(adapt_delta = 0.99,
+                 max_treedepth = 12)
+  )
+
+# check caterpillar
+plot(scam_model) # mixes well
+
+# check samples against data
+pp_check(scam_model, ndraws = 100, type = "dens_overlay") 
+# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+
+conditional_effects(scam_model)
 
 ```
 
@@ -415,31 +452,34 @@ bf_bridge
 #xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
 
 # create new data for prediction
-newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
-                       delta_f_raw_o = unique(xdata$delta_f_raw_o)
-                       )
+# newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
+#                        delta_f_raw_o = unique(xdata$delta_f_raw_o)
+#                        ) |> 
+#   filter(!is.na(delta_t_o),
+#          !is.na(delta_f_raw_o))
 
-# newdata <- expand_grid(delta_t = unique(xdata$delta_t),
-#                        delta_f_raw = unique(xdata$delta_f_raw)
-#                        )
+newdata <- expand_grid(delta_t = unique(xdata$delta_t),
+                       delta_f_raw = unique(xdata$delta_f_raw)
+                       )
 
 
 # Visualize
 #prediction_exp <- exp_model |> 
-prediction_mono <- mono_model |> 
+prediction_mono <- scam_model |> 
   epred_draws(newdata = newdata,
               re_formula = NA) |> 
-    group_by(delta_t_o, delta_f_raw_o) |> 
-    #group_by(delta_t, delta_f_raw) |> 
+    #group_by(delta_t_o, delta_f_raw_o) |> 
+    group_by(delta_t, delta_f_raw) |> 
     summarise(pred_m = mean(.epred, na.rm = TRUE),
               pred_0025 = quantile(.epred, prob = 0.025),
               pred_0975 = quantile(.epred, prob = 0.975)) |> 
-  rename(delta_t = delta_t_o,
-         delta_f_raw = delta_f_raw_o) |>
+  rename(delta_t = delta_t,
+         delta_f_raw = delta_f_raw) |>
   mutate(delta_t = as.numeric(as.character(delta_t)),
          delta_f_raw = as.numeric(as.character(delta_f_raw)))
 
-model_plot <- prediction_mono |> 
+#model_plot <- 
+prediction_mono |> 
   ggplot(aes(x = delta_t,
              y = pred_m,
              color = delta_f_raw,

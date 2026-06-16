@@ -1,0 +1,262 @@
+================================================================================
+COLUMN DOCUMENTATION (CODEBOOK)  —  csvs/merged_260601.csv
+ManyTones project   |   Generated 2026-06-05   |   Source data: 2026-06-01
+================================================================================
+
+WHAT THIS FILE IS
+-----------------
+A plain-text description of every column in merged_260601.csv, written so a
+colleague who has never seen the raw data can understand and analyse it.
+
+The CSV is produced by process_csv_v3.py, which reads the per-participant
+PsychoPy export files in csvs/dat_260601/, keeps a subset of columns, renames
+them to friendly names, derives a few new columns, and stacks all participants
+into one table.
+
+
+THE EXPERIMENT IN ONE PARAGRAPH
+-------------------------------
+Listeners hear a short /di/ syllable whose fundamental frequency (F0, "pitch")
+has been digitally manipulated, and on every trial they (a) judge the pitch
+DIRECTION (does it go high / mid / low) and (b) reproduce the perceived pitch by
+moving a slider that maps to a frequency in Hz. The base sound is
+07_di_150hz_75db_250ff.wav: a /di/ syllable at 150 Hz, 75 dB. Stimuli differ in
+how much the F0 is shifted (delta_f, in Hz), in which direction (rising "p" /
+falling "n" / flat), and in WHERE in the syllable the shift happens (delta_t, in
+ms). Each listener completes the same stimulus set twice, once named as TONE
+block and once named as CV block.
+
+
+DATASET SHAPE
+-------------
+- Rows: 5040   (one row = one trial)
+- Columns: 61
+- Participants: 40  (each did exactly 126 trials = 63 TONE + 63 CV)
+- Recruitment groups (labID): 32 online (Prolific) + 8 in-lab
+
+GRAIN / "LONG" FORMAT
+- Each row is a single trial.
+- PER-TRIAL columns change from row to row (the stimulus, the response, RT...).
+- PARTICIPANT-LEVEL columns are summaries that repeat identically across all
+  126 rows of that participant (e.g. demographics, met_score, every catch_*
+  column, catch_n_found, goodbye.stopped). Collapse to one row per participant
+  before treating these as per-person values, or you will count them 126x.
+
+
+KEY DERIVED RELATIONSHIPS (worth knowing before you analyse)
+------------------------------------------------------------
+1. Stimulus filename encodes the condition:
+       main_files/trial_di/07_di_150hz_75db_250ff-<delta_f><dir>-<delta_t>.wav
+   e.g.  ...-40p-100.wav  ->  delta_f=40 Hz, dir=p (rising), delta_t=100 ms
+         ...-000-120.wav  ->  flat baseline (delta_f=0, dir=0, delta_t coded 0)
+
+2. Correct direction is fixed by the stimulus direction:
+       dir = p (rising)  -> corr_dir_di = h (high)
+       dir = n (falling) -> corr_dir_di = l (low)
+       dir = 0 (flat)    -> corr_dir_di = m (mid)
+
+3. Accuracy of the direction judgement:
+       is_correct = TRUE  iff  response_dir == corr_dir_di
+
+4. Pitch-match slider -> frequency in Hz:
+       response_f = 100 + (final_rating - 1) * 5
+   So slider 1 -> 100 Hz, slider 11 -> 150 Hz (= base), slider 21 -> 200 Hz,
+   in 5-Hz steps.
+
+5. final_rating is the unified slider value: it equals tone_slider.response on
+   TONE-block rows and cv_slider.response on CV-block rows (verified identical).
+
+
+================================================================================
+COLUMNS, GROUP BY GROUP
+================================================================================
+For each column:  NAME  |  level (trial / participant)  |  type  |  description
+
+--------------------------------------------------------------------------------
+A. IDENTIFIERS & SESSION METADATA
+--------------------------------------------------------------------------------
+labID            participant  text   Recruitment/site identifier. Two values
+                                     here: "unknown_lab" = the 32 online
+                                     (Prolific) participants; "4698" = the 8
+                                     in-lab participants.
+participantID    participant  text   Unique per-person UUID (40 distinct).
+                                     USE THIS as the participant key.
+date             participant  text   Session start timestamp, format
+                                     YYYY-MM-DD_HHhMM.SS.mmm (e.g.
+                                     2026-05-31_23h49.02.675).
+prolific_pid     participant  text   Prolific participant ID. Blank for the 8
+                                     in-lab participants.
+study_id         participant  text   Prolific study ID (one study here).
+session_id       participant  text   Prolific session ID (unique per online
+                                     participant). Blank for in-lab.
+
+--------------------------------------------------------------------------------
+B. PARTICIPANT DEMOGRAPHICS & MUSICAL BACKGROUND  (from the intake survey)
+   All participant-level; collected once, repeated on every row.
+--------------------------------------------------------------------------------
+birthyear              participant  int   Year of birth (free entry). NOTE: range
+                                          1925-2007; 1925 looks like an outlier /
+                                          typo - sanity-check before computing age.
+sex                    participant  cat   Recoded: female / male / other /
+                                          not_to_say. (Only female & male occur.)
+residence_country      participant  text  Country of residence. FREE TEXT - needs
+                                          cleaning (e.g. "United States","USA",
+                                          "U.S","usa" all appear).
+country_of_origin      participant  text  Country of origin. Free text, same
+                                          cleaning caveat as above.
+language               participant  JSON  Self-reported languages & proficiency,
+                                          stored as a JSON array (one object per
+                                          language). "Column 1" = language name;
+                                          "Column 2"-"Column 8" = the survey's
+                                          self-rating fields (e.g. proficiency,
+                                          age of acquisition). Must be parsed.
+instrument             participant  bool  Plays a musical instrument? TRUE/FALSE.
+instrument_training    participant  bool  Has had instrument training? TRUE/FALSE.
+                                          Blank when not applicable.
+musical_level          participant  cat   Self-rated level, recoded: beginner /
+                                          intermediate / advanced / semi-
+                                          professional / professional.
+musical_training_year  participant  num   Years of musical training (0, 0.5, ...).
+group_singing          participant  bool  Sings in a group/choir? TRUE/FALSE.
+group_singing_year     participant  num   Years of group singing.
+solo_vocal             participant  bool  Does solo vocal performance? TRUE/FALSE.
+solo_vocal_year        participant  num   Years of solo vocal experience.
+music_hour             participant  num   Self-reported hours of music listening
+                                          (per week).
+
+--------------------------------------------------------------------------------
+C. STIMULUS / CONDITION  (what was played on this trial)
+--------------------------------------------------------------------------------
+trial_di_list      trial  text  Path of the .wav played, e.g.
+                                main_files/trial_di/07_di_150hz_75db_250ff-40p-100.wav
+                                The merged file contains ONLY these trial_di
+                                stimuli (other trial types were filtered out).
+delta_f            trial  int   Magnitude of the F0 shift, in HERTZ, applied to
+                                the syllable. Values: 0,10,20,30,40. 0 = flat
+                                baseline (no shift).
+stimuli_direction  trial  cat   Direction of the F0 shift parsed from the
+                                filename: p = rising (positive Hz), n = falling
+                                (negative Hz), 0 = flat (no movement).
+delta_t            trial  int   Temporal position of the pitch movement within
+                                the syllable, in MILLISECONDS. Values:
+                                20,40,60,80,100,120,140; coded 0 for the flat
+                                baseline (which has no movement).
+corr_dir_di        trial  cat   CORRECT pitch-direction answer, determined by the
+                                stimulus: h (high, = rising), m (mid, = flat),
+                                l (low, = falling). See relationship #2 above.
+
+--------------------------------------------------------------------------------
+D. BLOCK / TRIAL STRUCTURE
+--------------------------------------------------------------------------------
+tone_trials.thisN  trial  int   0-based trial index WITHIN the TONE block.
+                                Populated only on tone-block rows (2520 rows).
+cv_trials.thisN    trial  int   0-based trial index WITHIN the CV (speech) block.
+                                Populated only on cv-block rows (2520 rows).
+                                -> Use these two to tell which block a row is in:
+                                   tone_trials.thisN set  => TONE block
+                                   cv_trials.thisN set    => CV block
+trial_tone_list    trial  text  (EMPTY in this file.) Stimulus list placeholder
+                                kept from the export; all values blank here.
+trial_i_list       trial  text  (EMPTY in this file.) As above, blank here.
+is_catch           trial  int   Catch-trial flag. All 0 here, because the actual
+                                catch trials were removed and summarised into the
+                                catch_* columns below.
+
+--------------------------------------------------------------------------------
+E. RESPONSE 1 - PITCH-DIRECTION JUDGEMENT
+--------------------------------------------------------------------------------
+response_dir   trial  cat   Listener's direction response: h / m / l
+                            (high / mid / low).
+is_correct     trial  bool  TRUE if response_dir == corr_dir_di, else FALSE.
+
+--------------------------------------------------------------------------------
+F. RESPONSE 2 - PITCH MATCHING (slider)
+--------------------------------------------------------------------------------
+final_rating          trial  num   Final slider position, integer 1-21. This is
+                                    the unified pitch-match value (= the block's
+                                    tone_slider/cv_slider response). MISSING
+                                    values were filled with 11 (= 150 Hz) by the
+                                    processing script, so a value of 11 may be a
+                                    real response OR an imputed default - check
+                                    response_list / *_slider.response if it
+                                    matters.
+response_f            trial  num   final_rating converted to Hz:
+                                    100 + (final_rating-1)*5  -> 100-200 Hz in
+                                    5-Hz steps. This is the matched pitch in Hz.
+final_moves          trial  int   How many times the slider was moved before the
+                                    response was logged (1-31).
+response_list        trial  text  Comma-separated history of slider values the
+                                    listener stepped through, e.g. "12,9,10,12,11".
+                                    Last value corresponds to final_rating.
+tone_slider.response trial  num   Slider value on TONE-block rows (blank on CV
+                                    rows). Equals final_rating there.
+cv_slider.response   trial  num   Slider value on CV-block rows (blank on TONE
+                                    rows). Equals final_rating there.
+response_time        trial  num   Trial response time in SECONDS (range ~1-200,
+                                    mean ~7.6). Long tail - consider trimming
+                                    outliers.
+
+--------------------------------------------------------------------------------
+G. ATTENTION / CATCH CHECKS  (all participant-level summaries)
+   Catch trials asked the listener to set the slider to a stated target. These
+   columns summarise how they did. "_res" = their response, "_ans" = the correct
+   target, "_correct" = whether |res - ans| <= 1 (tolerance of 1 step).
+--------------------------------------------------------------------------------
+catch_n_found            participant  int   How many catch trials were located for
+                                            this participant (4 for everyone here).
+catch_tone_loop_res      participant  num   Response on the TONE "loop" catch.
+catch_tone_loop_ans      participant  int   Correct target for it (= 1).
+catch_tone_loop_correct  participant  bool  Passed that catch? True/False.
+catch_tone_end_res       participant  num   Response on the TONE "end" catch.
+catch_tone_end_ans       participant  int   Correct target (= 21).
+catch_tone_end_correct   participant  bool  Passed? True/False.
+catch_cv_loop_res        participant  num   Response on the CV "loop" catch.
+catch_cv_loop_ans        participant  int   Correct target (= 1).
+catch_cv_loop_correct    participant  bool  Passed? True/False.
+catch_cv_end_res         participant  num   Response on the CV "end" catch.
+catch_cv_end_ans         participant  int   Correct target (= 1).
+catch_cv_end_correct     participant  bool  Passed? True/False.
+
+  Legacy aliases (kept so older analysis scripts keep working; duplicates of the
+  two "end" catches above):
+catch1_res      participant  num   = catch_tone_end_res.
+catch2_res      participant  num   = catch_cv_end_res.
+catch1_ans      participant  int   = catch_tone_end_ans (= 21).
+catch2_ans      participant  int   = catch_cv_end_ans  (= 1).
+catch1_correct  participant  bool  = catch_tone_end_correct.
+catch2_correct  participant  bool  = catch_cv_end_correct.
+
+--------------------------------------------------------------------------------
+H. OTHER MEASURES & TECHNICAL
+--------------------------------------------------------------------------------
+met_score        participant  num   Musical-ear screening score: total number of
+                                    correct responses on the MET-style musicality
+                                    block (sum of met_correct from the raw file).
+                                    Range here 1-45. Participant-level.
+headphone        participant  text  Free-text headphone description the listener
+                                    typed (e.g. "Sony WH-1000XM4"). Some blanks.
+goodbye.stopped  participant  num   Time on the final screen at experiment end,
+                                    in seconds from session start (~1431-5497 s,
+                                    i.e. ~24-92 min). Proxy for total duration.
+
+
+================================================================================
+DATA-CLEANING CHECKLIST (please read before analysis)
+================================================================================
+- One row = one trial. De-duplicate to participantID before using any
+  participant-level column (Group B, all catch_* columns, catch_n_found,
+  met_score, goodbye.stopped); otherwise each value is counted 126 times.
+- Identify the block with tone_trials.thisN (TONE) vs cv_trials.thisN (CV).
+- final_rating == 11 can be an imputed default for a missing response. One tone
+  trial has no slider response at all. Decide how to handle before averaging.
+- residence_country and country_of_origin are free text and need normalising.
+- language is JSON - parse it; don't treat it as a plain string.
+- birthyear has at least one implausible value (1925) - validate.
+- response_time and goodbye.stopped are both in SECONDS.
+- trial_tone_list and trial_i_list are entirely empty in this file.
+
+Provenance: columns are selected/renamed/derived in process_csv_v3.py; stimulus
+parameters (delta_f in Hz, delta_t in ms, p/n direction) are defined in the
+Praat generators under input/ (e.g. create_target_stimuli_cv_v3.praat,
+create_target_stimuli_tone_250.praat). Questions -> ask Chenzi Xu (ManyTones).
+================================================================================

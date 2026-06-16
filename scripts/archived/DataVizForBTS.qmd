@@ -4,7 +4,6 @@ format: html
 editor: visual
 ---
 
-
 ```{r setup, include=FALSE}
 
 if (!require("pacman")) install.packages("pacman")
@@ -64,7 +63,6 @@ xdata <- xdata |>
          )
 
 ```
-
 
 # Continuous dependent variable
 

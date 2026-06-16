@@ -23,47 +23,19 @@ options(mc.cores = parallel::detectCores())
 
 # Data & Wrangling
 
-Wrangle the data, generate derivatives for the analysis.
+Load in data.
 
 ```{r}
 #| label: data_wrangling
 
-# load in data 2025/09/11
-xdata <- read_csv("../data/merged_250911.csv")
-
-# derive some relevant measurements
-xdata <- xdata |> 
-  # remove erroneous data points
-  filter(delta_t != 0) |> 
-  # derive derivates
-  mutate(
-         # make delta_f positive / negative
-         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
-         # centralise
-         delta_f_raw_c = delta_f_raw - mean(delta_f_raw),
-         # transform delta_f_raw Hz into STs (reference 150Hz)
-         delta_f_raw_st = 12 * log2((150-delta_f_raw)/150),
-         # transform response_f relative to baseline 150hz      
-         response_f_rel = response_f - 150,
-         # transform response_f into STs (reference 150Hz)
-         response_f_rel_st = 12 * log2((150-response_f_rel)/150),
-         # adjust response direction for absolute delta_f values
-         response_f_rel_sign = ifelse(delta_f_raw > 0, response_f_rel, -response_f_rel),
-         # transform response_f_rel_sign into STs (reference 150Hz)
-         response_f_rel_sign_st = 12 * log2((150-response_f_rel_sign)/150),
-         # calculate response proportional to delta_f
-         response_f_prop = response_f_rel / delta_f_raw,
-         # calculate response proportional to delta_f in STs
-         response_f_prop_st = response_f_rel_st / delta_f_raw_st,
-         # make participant ID a character vector
-         participant = as.character(participant)
-         )
+# load in data 2026/06/01
+xdata <- read_csv("../data/data_after_exclusion.csv")
 
 ```
 
 # Simulating data based on model parameters
 
-Based on the estimated values the difference between Δf0 = -20 ms and -20 ms (#.# Hz [95% CrI: #.#-#.# Hz]), alongside the estimated variance components (random intercepts, random slopes, and correlation between them), we generated 100 datasets with these properties for a range of sample sizes [20-80]. For each simulation, we fitted a model as specified in (1) to the data and estimated the Bayes Factor for the critical coefficient being larger than point-zero, using the Savage-Dickey density ratio implemented in the bayestestR packages (Makowski et al. 2019 The Savage-Dickey density ratio (e.g. Dickey & Lientz 1970, Wagenmakers et al. 2010) relates the amount of evidence (the density of posterior samples) at point-zero for the model based on the priors only (i.e. before seeing the data) to the amount of evidence for the model based on both priors and likelihood (i.e. after seeing the data) (Liao et al. 2021). The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes Factor (BF) and is particularly suited for nested models, especially when models only differ with respect to one parameter. 
+Based on the estimated values the difference between Δf0 = -20 ms and -20 ms (#.# Hz \[95% CrI: #.#-#.# Hz\]), alongside the estimated variance components (random intercepts, random slopes, and correlation between them), we generated 100 datasets with these properties for a range of sample sizes \[20-80\]. For each simulation, we fitted a model as specified in (1) to the data and estimated the Bayes Factor for the critical coefficient being larger than point-zero, using the Savage-Dickey density ratio implemented in the bayestestR packages (Makowski et al. 2019 The Savage-Dickey density ratio (e.g. Dickey & Lientz 1970, Wagenmakers et al. 2010) relates the amount of evidence (the density of posterior samples) at point-zero for the model based on the priors only (i.e. before seeing the data) to the amount of evidence for the model based on both priors and likelihood (i.e. after seeing the data) (Liao et al. 2021). The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes Factor (BF) and is particularly suited for nested models, especially when models only differ with respect to one parameter.
 
 ```{r}
 #| label: parameter_extraction
@@ -83,19 +55,18 @@ beta = fixef(xmdl)[[2]]
 vc <- as.data.frame(VarCorr(xmdl))
 
 # get random intercept sd
-ran_int = vc$participant.sd.Estimate[1]
+ran_int = vc$participantID.sd.Estimate[1]
 
 # get random slope sd
-ran_slope = vc$participant.sd.Estimate[2]
+ran_slope = vc$participantID.sd.Estimate[2]
 
 # get cor between intercept and slope
-ran_cor = vc$participant.cor.Estimate.Intercept[2]
+ran_cor = vc$participantID.cor.Estimate.Intercept[2]
 
 # get resiudal sd
 sigma = vc$residual__.sd.Estimate[1]
 
 ```
-
 
 ```{r}
 #| label: wrapper_around_data_sim
@@ -103,17 +74,17 @@ sigma = vc$residual__.sd.Estimate[1]
 my_sim_data <- function(
 # participants
 subj_n = 50,    # number of subjects per language
-rep_n = 2,      # number of repetitions (planned to reduce to 2)
+rep_n = 2,      # number of repetitions
 
 # predictors
 # lang_n = 4   # number of languages
 b0 = intercept,        # intercept
-b1 = beta,        # fixed effect of delta_f (difference between delta_f = -20 vs. 20) 
+b1 = beta,             # fixed effect of delta_f (difference between delta_f = -20 vs. 20) 
 
 # random effects
 u0s_sd = ran_int,      # random intercept SD for subjects
-u1s_sd = ran_slope,      # random b1 slope SD for subjects (delta_t)
-r01s = ran_cor,          # correlation between random effects b0 and b1 for subjects
+u1s_sd = ran_slope,    # random b1 slope SD for subjects (delta_t)
+r01s = ran_cor,        # correlation between random effects b0 and b1 for subjects
 
 sigma_sd = sigma) {    # residuals SD
 
@@ -137,6 +108,7 @@ df <-   add_random(subject = subj_n) |>
 df
 }
 
+
 ## sanity check
 my_sim_data() |> 
   ggplot() +
@@ -154,12 +126,9 @@ formula_sim = bf(response ~ delta_f + (delta_f | subject), nu = 4)
 
 # my priors (default for now plus weakly regularizing for beta)
 mypriors <- c(
-              # prior(normal(0, 6.67), class = "b"),
-              # prior(normal(0, 6.67), class = "Intercept"),
-              # prior(normal(0, 6.67), class = "sd", lb = 0),
-              prior(cauchy(0, 6.67), class = "b"),
-              prior(cauchy(0, 6.67), class = "Intercept"),
-              prior(cauchy(0, 6.67), class = "sd", lb = 0),
+              prior(cauchy(0, 3.33), class = "b", ub = 100, lb = -100),
+              prior(cauchy(0, 3.33), class = "Intercept", ub = 50, lb = -50),
+              prior(cauchy(0, 3.33), class = "sd", ub = 100),
               prior(lkj(1), class = "cor")
               )
 
@@ -170,8 +139,8 @@ n_sims <- 200
 bfs_list <- list()
 subject_list <- list()
 
-# Define subject number for different models (10-50)
-subjects <- as.list(seq(30,70,5))
+# Define subject number for different models (25-75)
+subjects <- as.list(seq(25,75,5))
 
 # Loop through priors and fit models
 for (i in seq_along(subjects)) {
@@ -185,7 +154,7 @@ for (i in seq_along(subjects)) {
     data = dat_sim,
     iter = 4000,
     warmup = 2000,
-    control = list(adapt_delta = 0.99),
+    control = list(adapt_delta = 0.90),
     family = student(),
     prior = mypriors
   )
@@ -223,41 +192,62 @@ subject_list_df <- as.data.frame(subject_list) |>
 loop_results$subj_n = subject_list_df$subj_n
 
 # save results
-#write.csv(loop_results, "../data/BF_sample_size_calculation.csv")
+write.csv(loop_results, "../data/BF_sample_size_calculation.csv")
 ```
 
-
 ```{r plot_results}
-
 
 loop_results <- read_csv("../data/BF_sample_size_calculation.csv")
   
 # plot results
 loop_agg <- loop_results |> 
   group_by(subj_n) |> 
-  summarise(BF_l10 = quantile(BF, prob = 0.05),
+  summarise(BF_l05 = quantile(BF, prob = 0.05),
             BF = median(BF)) 
   
+
+# colors for sequential
+
+myPalette <- colorRampPalette(colors = c("#f1eef6","#d4b9da",
+                                         "#c994c7","#df65b0",
+                                         "#dd1c77","#980043"))
+
 BF_sample_plot <- 
 ggplot(data = loop_agg,
        aes(x = subj_n, y = BF,
            fill = BF)) +
   geom_point(data = loop_results,
-             alpha = 0.5,
+             alpha = 0.1,
+             color = "white",
              pch = 21) +
-  geom_path() +
-  geom_line(aes(y = BF_l10),
-            lty = "dotted",
-            color = "purple") +
+  #geom_path() +
+  geom_segment(aes(x = subj_n-1,
+                   xend = subj_n+1,
+                   y = BF_l05,
+                   yend = BF_l05),
+              size = 1,
+              color = "black") +
   geom_point(pch = 21,
              size = 5) +
   geom_hline(yintercept = 10,
              lty = "dashed") +
-  scale_fill_viridis(option= "plasma", 
-                     trans = "log10",
-                     breaks = c(1,10,100,1000,10000)) +
-  #scale_x_continuous(limits = c(30,90)) +
-  scale_y_continuous(trans = "log10") +
+  scale_fill_gradientn(colours = myPalette(100),
+                       trans = "log10",
+                       breaks = c(0.1,1,10,100,1000,10000),
+                       labels = c(0.1,1,10,100,1000,10000)) +
+  # scale_fill_viridis(option= "plasma", 
+  #                    trans = "log10",
+  #                    limits = c(0.01,10000),
+  #                    breaks = c(0.01,0.1,1,10,100,1000,10000),
+  #                    labels = c(0.01,0.1,1,10,100,1000,10000)) +
+  scale_y_continuous(trans = "log10",
+                     limits = c(0.1,10000),
+                     breaks = c(0.1,1,10,100,1000,10000),
+                     labels = c(0.1,1,10,100,1000,10000)
+                     ) +
+  scale_x_continuous(limits = c(20,80),
+                     breaks = seq(25,75,5)
+                     ) +
   labs(x = "\nnumber of subjects",
        y = "Bayes Factor for beta > 0 over beta < 0\n",
        fill = "Bayes Factor for beta > 0\n") +
@@ -272,6 +262,6 @@ ggsave(filename = "../plots/BF_sample_sim.png",
        height = 100,
        units = "mm", 
        bg = "transparent",
-       dpi = 500)
+       dpi = 300)
 
 ```

@@ -1,0 +1,454 @@
+---
+title: "Descriptive Exploration"
+author: Timo Roettger
+date: 2026-06-06
+format: html
+editor: visual
+---
+
+```{r}
+#| include: FALSE
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+```
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+# read in libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, htmlwidgets, webshot2, ggrepel)
+
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# set the current working directory to the one where this file lives
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+```{r}
+#| label: data_wrangling
+
+# load in data 2026/06/01
+xdata <- read_csv("../data/data_after_exclusion.csv")
+hombert <- read_csv("../data/hombert.csv")
+
+```
+
+# Descriptive exploration
+
+We explore how pitch perception changes as a function of the f0 slope (`delta_f`) and the slope duration (`delta_t`).
+
+## Overall means
+
+```{r}
+#| label: descriptive-exploration
+#| fig-cap: "Descriptive means for all combinations of f0 slope in Hz and slope duration in ms"
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participantID) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+xdata_agg_all <- xdata |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  
+descriptive_plot <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           #x = delta_f_raw,
+           y = response_f_rel,
+           color = as.ordered(delta_f_raw))) +
+           #color = delta_t)) +
+  geom_hline(data = xdata_agg_all |> filter(delta_t == 0),
+             aes(yintercept = response_f_rel),
+             lty = "dashed",
+             color = "black") +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             #aes(group = delta_t),
+             lwd = 2.5,
+            color = "black") +
+  geom_line(data = xdata_agg_all,
+             aes(group = delta_f_raw),
+             #aes(group = delta_t),
+             lwd = 2) +
+  scale_y_continuous(limits = c(-20,20),
+                     breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
+  #scale_color_viridis(option= "viridis") +
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "f0 slope") +
+  guides(color = guide_legend(reverse = TRUE)) +
+  theme_minimal()
+  
+descriptive_plot
+
+```
+
+Now we compare these pilot results to the projected results based on Hombert (1975).
+
+```{r}
+#| label: hombert-comparison
+#| fig-cap: "Comparison between descriptive means of Hombert (1975) and our pilot for all combinations of f0 slope and slope duration."
+
+# rename to match datasets
+hombert_renamed <- hombert |> 
+  rename(delta_f_raw = target,
+         delta_t = slope_dur) |> 
+  mutate(dataset = "Hombert (1975)",
+         response_f_rel = val_projected-150) |> 
+  select(delta_f_raw, delta_t, response_f_rel, dataset)
+
+xdata_agg_all_2 <- xdata_agg_all |> 
+  filter(delta_t != 0) |> 
+  mutate(dataset = "Pilot") |> 
+  full_join(hombert_renamed)
+
+hombert_comparison <- 
+ggplot(data = xdata_agg_all_2, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = as.ordered(delta_f_raw))) +
+  geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 2, color = "black") +
+  geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 1.5) +
+  
+  # --- UPDATED: AUTOMATICALLY SPREAD LABELS WITH CONNECTOR LINES ---
+ geom_text_repel(
+    data = xdata_agg_all_2 |> 
+      group_by(dataset, delta_f_raw) |> 
+      filter(delta_t == max(delta_t)), # Finds the end of *each individual line*
+    aes(label = delta_f_raw),
+    
+    direction = "y",             # Move labels vertically to avoid overlap
+    nudge_x = 25,                # Push labels out to the right
+    min.segment.length = 0,      # Always draw connector lines
+    segment.color = alpha("grey40",0.2),    
+    segment.size = 0.4,          
+    fontface = "bold",
+    show.legend = FALSE
+  ) +
+  
+  scale_y_continuous(limits = c(-40, 60),
+                     breaks = seq(-40, 60, 20),
+                     labels = paste0(seq(-40, 60, 20), " Hz")) +
+  
+  # Expanded x-axis limits to 300 to give the repelled text and lines room to exist
+  scale_x_continuous(breaks = seq(0, 250, 50), limits = c(0, 300)) + 
+  
+  labs(title = "Comparison between original study and pilot",
+       subtitle = "Hombert (1975, n = 10) vs. Pilot (n = 37)",
+       x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "f0 slope") +
+  
+  facet_grid(~dataset) +
+  theme_minimal() +
+  theme(legend.position = "none") # Hide sidebar legend since lines are directly labeled
+  
+hombert_comparison
+
+ggsave(filename = "../plots/hombert_comparison.png",
+       plot = hombert_comparison,
+       device = "png",
+       width = 200, 
+       height = 120,
+       units = "mm",
+       dpi = 300)
+
+
+```
+
+It becomes clear that whatever Hombert (1975) has observed based on 10 American speakers is hardly representative of our pilot results. Looking at only those slope combinations that were used in both Hombert (1975) and our pilot, we can see that the effect magnitudes are substantially smaller:
+
+```{r}
+#| label: hombert-comp-table
+#| tbl-cap: "Project data from Hombert (1975), projected onto reference value of 150Hz, compared to pilot data"
+
+pilot_tbl <- xdata_agg_all_2 |> 
+  filter(delta_f_raw %in% c(-20,-10,10,20),
+         delta_t %in% c(40,60,100),
+         dataset == "Pilot") |> 
+  select(delta_f_raw, delta_t, response_f_rel) |> 
+  mutate(response_f_rel = round(response_f_rel,2)) |> 
+  pivot_wider(id_cols = delta_t,
+              names_from = delta_f_raw,
+              values_from = response_f_rel)
+
+hombert_tbl <- xdata_agg_all_2 |> 
+  filter(delta_f_raw %in% c(-20,-10,10,20),
+         delta_t %in% c(40,60,100),
+         dataset == "Hombert (1975)") |> 
+  select(delta_f_raw, delta_t, response_f_rel) |> 
+  mutate(response_f_rel = round(response_f_rel,2)) |> 
+  pivot_wider(id_cols = delta_t,
+              names_from = delta_f_raw,
+              values_from = response_f_rel)
+
+knitr::kable(pilot_tbl) |> 
+  add_header_above(c(
+    "Pilot" = 1,                   # Empty space above the row labels (width = 1 column)
+    "f0 perturbation" = 4      # Your variable name spanning across the 2 split columns
+  ))
+
+knitr::kable(hombert_tbl) |> 
+  add_header_above(c(
+    "Hombert" = 1,                   # Empty space above the row labels (width = 1 column)
+    "f0 perturbation" = 4      # Your variable name spanning across the 2 split columns
+  ))
+
+```
+
+## 3-dimensional
+
+Plotting linear prediction of pilot results in three dimensions:
+
+```{r}
+
+xdata_3d <- xdata_agg_all |> 
+  filter(delta_t != 0)
+
+# estimate a linear model
+xmdl <- lm(response_f_rel~ delta_t*delta_f_raw, xdata_3d)
+
+# extract predictions
+newdata_grid <- expand_grid(
+  delta_t = unique(xdata_3d$delta_t),
+  delta_f_raw = unique(xdata_3d$delta_f_raw)
+)
+
+# extract predictions along with standard errors / fit intervals
+raw_predictions <- predict(xmdl)
+
+# bind the predictions back onto your grid mapping for a complete table
+final_table <- newdata_grid  |> 
+  bind_cols(as_tibble(raw_predictions))
+
+# set up matrix
+z_matrix <- matrix(final_table$value, nrow = 8, ncol = 7, byrow = TRUE)
+
+x_axis <- unique(xdata_3d$delta_t)
+y_axis <- unique(xdata_3d$delta_f_raw)
+
+x_step <- (max(x_axis) - min(x_axis)) / 20
+y_step <- (max(y_axis) - min(y_axis)) / 20
+
+threeD_plot <- 
+  plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix, 
+        type = "surface",
+        #opacity = 0.75,
+        colors = 'viridis',
+        showscale = FALSE,
+        
+        contours = list(
+          x = list(
+            show = TRUE, 
+            usecolormap = FALSE, 
+            project = list(x = TRUE), 
+            color = "rgba(255, 255, 255, 0.4)", # Subtle transparency prevents aliasing lines
+            width = 1,                          # Thinner lines look crisper at angles
+            start = min(x_axis),
+            end = max(x_axis),
+            size = x_step                       # Explicitly sets high granularity
+          ),
+          y = list(
+            show = TRUE, 
+            usecolormap = FALSE, 
+            project = list(y = TRUE), 
+            color = "rgba(255, 255, 255, 0.4)", 
+            width = 1,                          
+            start = min(y_axis),
+            end = max(y_axis),
+            size = y_step                       # Explicitly sets high granularity
+          )
+        )) |> 
+  layout(
+    scene = list(
+      xaxis = list(title = 'slope duration (ms)', 
+                   tickvals = x_axis, 
+                   ticktext = x_axis,
+                   showgrid = TRUE),
+      yaxis = list(title = 'f0 slope (Hz)', 
+                   tickvals = y_axis, 
+                   ticktext = y_axis,
+                   showgrid = TRUE),
+      zaxis = list(title = 'f0 response (Hz)')
+    ))
+
+threeD_plot
+
+saveWidget(threeD_plot, "../plots/3d_plot.html", selfcontained = TRUE)
+#webshot("../plots/3d_plot.html", file = "../plots/3d_plot.png", delay = 2)
+
+
+```
+
+## Individual differences
+
+Let's have a look at individual differences across the pilot data:
+
+```{r}
+#| label: descriptive-exploration-individuals
+#| fig-cap: "Descriptive means for all combinations of f0 slope in Hz and slope duration in ms across all listeners. Color indicates f0 slope."
+
+xdata_agg <- xdata |> 
+  group_by(delta_f_raw, delta_t, participantID) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+
+xdata_reference <- xdata |> 
+  filter(delta_t == 0) |> 
+  group_by(participantID) |> 
+  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+
+# plot delta_t against response
+#subject_plot_1 <- 
+ggplot(data = xdata_agg, 
+       aes(x = delta_t,
+           y = response_f_rel,
+           color = as.ordered(delta_f_raw))) +
+  geom_line(aes(group = delta_f_raw),
+            lwd = 1) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  scale_x_continuous(breaks = c(20,60,100,140)) +
+  #scale_color_viridis_c(option= "viridis") +
+  geom_hline(data = xdata_reference,
+             aes(yintercept = response_f_rel),
+             lty = "dashed",
+             color = "black") +
+  facet_wrap(~participantID, 
+             ncol = 6, 
+             scales = "fixed") + 
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in Hz\n",
+       color = "f0 slope") +
+    guides(color = guide_legend(reverse = TRUE)) +
+  theme_minimal()
+
+```
+
+The majority of listeners do not seem to show much sensitivity to the manipulation. Two notable exceptions are `f2cb` (2nd column, 3rd row) and `r1u7` (6th column, 4th row) who show sensitivity to the directional manipulation of f0 slope.
+
+An alternative perspective can be gained from switching the aesthetic mappings:
+
+```{r}
+#| label: descriptive-exploration-individuals-2
+#| fig-cap: "Descriptive means for all combinations of f0 slope in Hz and slope duration in ms across all listeners. Color now indicates slope duration."
+
+# plot delta_f_raw against response
+ggplot(data = xdata_agg, 
+       aes(x = delta_f_raw,
+           y = response_f_rel,
+           color = as.ordered(delta_t))) +
+  geom_line(aes(group = delta_t),
+            lwd = 1) +
+  # scale_y_continuous(limits = c(-20,20),
+  #                    breaks = seq(-20,20,10)) +
+  #scale_color_viridis_c(option= "viridis") +
+  geom_hline(yintercept = 0.25,
+             lty = "dashed") +
+  facet_wrap(~participantID, 
+             ncol = 6, 
+             scales = "fixed") + 
+  #scale_color_stepsn(colours = "viridis") +
+  labs(x = "\npitch difference in Hz",
+       y = "average observed pitch response in Hz\n",
+       color = "slope duration") +
+  guides(color = guide_legend(reverse = TRUE)) +
+  theme_minimal()
+
+```
+
+To quantify these individual differences, we calculate one metric across all conditions that captures the recovered f0 from the target stimulus. First we explore the proportion of recovered f0 across all f0 perturbations:
+
+```{r}
+#| label: recovered-f0
+#| fig-cap: "Proportion of recovered f0 across f0 slopes. Grey lines are individual participants; think pink line is population mean. Dashed line at zero indicates null effect; dashed line at 33% indicates predicted ceiling of 1/3 of slope based on Rossi's work."
+
+xdata <- 
+  xdata |> 
+    mutate(recovered_f0 = response_f_rel / delta_f_raw) 
+
+xagg_r <- xdata |> 
+  group_by(delta_f_raw, participantID) |> 
+  summarise(recovered_f0 = mean(recovered_f0)) |> 
+  filter(delta_f_raw != 0)
+
+xagg_r_all <- xdata |> 
+  group_by(delta_f_raw) |> 
+  summarise(recovered_f0 = mean(recovered_f0)) |>   
+  filter(delta_f_raw != 0)
+
+  ggplot(xagg_r,
+         aes(x = delta_f_raw,
+             y = recovered_f0)) +
+  geom_line(aes(group = participantID),
+            color = "grey",
+            alpha = 0.5) +
+    geom_line(data = xagg_r_all,
+            color = "#dd1c77",
+            size = 3) +
+    geom_point(data = xagg_r_all,
+            size = 3,
+            color = "black") +
+    geom_point(data = xagg_r_all,
+            size = 2,
+            color = "#dd1c77") +
+    geom_hline(yintercept = c(0, 0.33), 
+               lty = "dashed") +
+    scale_x_continuous(breaks = c(-40,-30,-20,-10, 10, 20, 30, 40)) +
+    scale_y_continuous(breaks = c(-0.8, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.6),
+                       labels = paste0((c(-0.8, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.6) * 100), "%")) +
+    labs(x = "f0 perturbation",
+         y = "percentage of recovered f0") +
+    theme_minimal()
+
+```
+
+It does not look like as if the amount of f0 perturbation matters for the recovered f0. As opposed to the literature, the average recovered pitch lies between 0 and 10% and not at 1/3 as predicted by Rossi's work.
+
+```{r}
+
+xagg_r_participants <- xdata |> 
+  filter(delta_f_raw != 0) |> 
+  group_by(participantID) |> 
+  summarise(recovered_f0 = mean(recovered_f0))
+
+ggplot(xagg_r_participants,
+         aes(x = recovered_f0)) +
+  geom_point(y = 0,
+             size = 3,
+             pch = 21,
+             color = "white",
+             fill = "#dd1c77") +
+  geom_density(fill = "#dd1c77",
+               alpha = 0.5) +
+  scale_x_continuous(limits = c(-0.1,0.4),
+                     breaks = seq(-0.1,0.4,0.1),
+                     labels = paste0(seq(-0.1,0.4,0.1)*100, "%")) +
+  geom_vline(lty = c("dashed", "dotted"),
+             xintercept = c(0,1/3)) +
+  labs(title = "Individual differences for recovered f0",
+       subtitle = "",
+       y = "",
+       x = "percentage of recovered f0") + 
+  theme_minimal() +
+  theme(legend.position = "none",
+        strip.text = element_blank())
+
+```
+
+Looking at he distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with a three outliers that recover f0 above 20% up to 33%.

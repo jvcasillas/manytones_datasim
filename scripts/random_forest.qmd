@@ -1,0 +1,191 @@
+---
+title: "Random Forests"
+author: Timo Roettger
+date: 2026-06-06
+format: html
+editor: visual
+---
+
+```{r}
+#| include: FALSE
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+```
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+# install dev version of SAEforest
+# devtools::install_github("krennpa/SAEforest")
+
+# read in libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, ranger, SAEforest)
+
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# set the current working directory to the one where this file lives
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+```{r}
+#| label: data
+
+# load in data 2026/06/01
+xdata <- read_csv("../data/data_after_exclusion.csv") 
+
+# generate average recovered_f0
+xdata_agg <- xdata |> 
+  filter(delta_f != 0) |> 
+  group_by(participantID) |> 
+  summarise(recovered_f0_mean = mean(recovered_f0, na.rm = FALSE))
+
+# left_join with other infos
+xdata <- xdata |> 
+  select(1:16) |> 
+  #filter(delta_f != 0) |> 
+  left_join(xdata_agg, by = "participantID") |> 
+  distinct()
+
+
+
+
+
+```
+
+
+```{r}
+#| label: prepare-for-merf
+
+# define DV and IVs
+xdata$participantID <- as.factor(xdata$participantID)
+y.cols <- xdata$recovered_f0
+## need to define the relevant predictors 
+x.cols <- xdata[,c(3:6,8:15)]
+
+```
+
+## Tuning the MERF
+First, map out the parameter combinations you want to test.
+
+```{r}
+#| label: define-grid-for-tuning
+
+# Define hyperparameters to test
+tuning_grid <- expand.grid(
+  mtry = seq(2, 10, 2),                     # Adjust based on your total number of features: Currently 12+ 
+  min_node_size = c(1, 3, 5, 10, 20, 50, 100),       # Lower = deeper trees (more complex)
+  num_trees = 500,                       # Fixed at 500 for speed
+  stringsAsFactors = FALSE
+)
+
+# Create a placeholder column to store performance results
+tuning_grid$OOB_MSE <- NA_real_
+
+```
+
+Loop through your grid, fit a MERFranger model for each combination, and extract the Out-of-Bag Mean Squared Error ($OOB\_MSE$) from the forest component to evaluate performance.
+
+```{r}
+#| label: run-grid-search
+
+# Loop through each row of the grid
+for (i in 1:nrow(tuning_grid)) {
+  
+  cat(sprintf("Tuning iteration %d/%d: mtry = %d, min.node.size = %d\n", 
+              i, nrow(tuning_grid), tuning_grid$mtry[i], tuning_grid$min_node_size[i]))
+  
+  # Fit the model with current parameters
+  temp_merf <- MERFranger(
+    Y = y.cols,
+    X = x.cols,
+    random = "(1|participantID)",
+    data = xdata,
+    num.trees = tuning_grid$num_trees[i],
+    mtry = tuning_grid$mtry[i],
+    min.node.size = tuning_grid$min_node_size[i],
+    verbose = FALSE # Turn off inner logs to keep console clean
+  )
+  
+  # Extract the prediction error (MSE) from the ranger object
+  tuning_grid$OOB_MSE[i] <- temp_merf$Forest$prediction.error
+}
+
+```
+
+Once the loop finishes, look at your grid to find the row with the lowest error score and use those exact parameters to train your final model.
+
+```{r}
+#| label: identify-optimal-model
+
+# Find the best parameters
+best_params <- tuning_grid |> 
+  arrange(OOB_MSE) |> 
+  slice(1)
+
+print(best_params)
+# mtry = 2
+# min_node_size = 10
+
+# Train your final production model using the best parameters found
+final_merf_model <- MERFranger(
+  Y = y.cols,
+  X = x.cols,
+  random = "(1|participantID)",
+  data = xdata,
+  num.trees = best_params$num_trees,
+  mtry = best_params$mtry,
+  min.node.size = best_params$min_node_size,
+  importance = "permutation" # Turn on importance for your final model
+)
+
+```
+
+Now extract variable importance:
+
+```{r}
+#| label: var-importance
+#| fig-cap: "Variable Importance (Fixed Effects Component)"
+
+var_imp <- importance(final_merf_model$Forest)
+
+print(var_imp)
+
+imp_df <- tibble(
+  Variable = names(var_imp),
+  Importance = var_imp
+) |> 
+  arrange(desc(Importance))
+
+# Plot
+ggplot(imp_df, 
+       aes(x = reorder(Variable, Importance), y = Importance,
+       xend = reorder(Variable, Importance))) +
+  geom_segment(
+    aes(xend = reorder(Variable, Importance), y = 0, yend = Importance),
+    color = "grey70",
+    linewidth = 0.8
+  ) +
+  geom_point(color = "#dd1c77", size = 2) +
+  coord_flip() +  # Flips to horizontal for readable variable names
+  labs(
+    title = "Variable Importance (Fixed Effects Component)",
+    subtitle = "Extracted from MERFranger Object",
+    x = "",
+    y = "Importance Score (Permutation)"
+  ) +
+  theme_minimal()
+
+```
+
