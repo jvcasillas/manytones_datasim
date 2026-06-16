@@ -216,6 +216,7 @@ knitr::kable(hombert_tbl) |>
 Plotting linear prediction of pilot results in three dimensions:
 
 ```{r}
+#| label: 3d-plot
 
 xdata_3d <- xdata_agg_all |> 
   filter(delta_t != 0)
@@ -340,7 +341,7 @@ ggplot(data = xdata_agg,
 
 ```
 
-The majority of listeners do not seem to show much sensitivity to the manipulation. Two notable exceptions are `f2cb` (2nd column, 3rd row) and `r1u7` (6th column, 4th row) who show sensitivity to the directional manipulation of f0 slope.
+The majority of listeners do not seem to show much sensitivity to the manipulation. Two notable exceptions are `f2cb` and `r1u7` who show sensitivity to the directional manipulation of f0 slope.
 
 An alternative perspective can be gained from switching the aesthetic mappings:
 
@@ -451,4 +452,4 @@ ggplot(xagg_r_participants,
 
 ```
 
-Looking at he distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with a three outliers that recover f0 above 20% up to 33%.
+Looking at he distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with three outliers that recover f0 above 20%.

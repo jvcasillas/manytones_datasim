@@ -53,14 +53,10 @@ xdata_agg <- xdata |>
 
 # left_join with other infos
 xdata <- xdata |> 
-  select(1:16) |> 
+  select(1:17) |> 
   #filter(delta_f != 0) |> 
   left_join(xdata_agg, by = "participantID") |> 
   distinct()
-
-
-
-
 
 ```
 
@@ -69,7 +65,7 @@ xdata <- xdata |>
 
 # define DV and IVs
 xdata$participantID <- as.factor(xdata$participantID)
-y.cols <- xdata$recovered_f0
+y.cols <- xdata$recovered_f0_mean
 ## need to define the relevant predictors 
 x.cols <- xdata[,c(3:6,8:15)]
 

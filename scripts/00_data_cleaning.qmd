@@ -2,7 +2,7 @@
 title: "Data Cleaning"
 author: Timo Roettger
 date: 2026-06-06
-format: html
+format: pdf
 editor: visual
 ---
 
@@ -354,6 +354,7 @@ xdata_filtered_temp_final_long |>
 
 As expected, moves were mostly one step up or down to adjacent slider positions, resulting in a symmetric distribution around zero. High values indicate a strong jump and can be expected to occur at the beginning of a trial but not at the end. Let's look at the final move which ideally should not be a big jump.
 
+
 ```{r}
 #| label: final-move
 #| fig-cap: "Distribution of slider distanct only for the last move before submitting."
@@ -382,7 +383,7 @@ xdata_filtered_temp_final |>
 
 ```
 
-There are indeed some larger values, up to jumps of 10 and higher. I think we should exclude moves that are beyond a certain threshold. A jump of 5 slider positions corresponds to 25 Hz.
+There are indeed some larger values, up to jumps of 10 and higher. I think we should exclude moves that are beyond a certain threshold. Having said that, it could be that someone explores negative and positive scale position to get a better feel for them and then jumps to an earlier explored part of the scale, even if that means a larger jump? However, a jump of 8 slider positions corresponds to 40 Hz, corresponding to a jump from a flat tone to our most extreme f0 perturbation. We exclude all trials with a final jump as large, or larger than 40 Hz.
 
 ```{r}
 #| label: exclude-too-large-final
@@ -393,16 +394,16 @@ There are indeed some larger values, up to jumps of 10 and higher. I think we sh
 # remove all trials with too large final moves
 xdata_filtered <- xdata_filtered_temp_final |>
   filter(final_moves == 1 |
-           final_distance < 5 & 
-           final_distance > -5)
+           final_distance < 8 & 
+           final_distance > -8)
 
 # data loss?
-filter3 <- nrow(xdata_filtered) # 4284
-excluded_final <- round((((filter2 - filter3) / filter2) * 100), 1) # ~1.8% data excluded
+filter3 <- nrow(xdata_filtered) # 4268
+excluded_final <- round((((filter2 - filter3) / filter2) * 100), 1) # ~0.4% data excluded
 
 ```
 
-There were `r excluded_final`% of trials in which the final slider change was above 25 Hz. We exclude these trials.
+There were `r excluded_final`% of trials in which the final slider change was above 40 Hz. We exclude these trials.
 
 ## Minimal reaction time
 
@@ -532,12 +533,12 @@ xdata_filtered |>
 
 ```
 
-After these exclusions, we assess how many valid data points remain for each participant. If a participant has less than 80% of trials left, we exclude that participant from the sample as well.
+After these exclusions, we assess how many valid data points remain for each participant. If a participant has less than 60% of trials left, we exclude that participant from the sample as well.
 
 ```{r}
 #| label: final-subject-removal
 
-data_loss_threshold = 0.8
+data_loss_threshold = 0.6
 
 # How many data points left per participant?
 xdata_final_exclusion <- 
@@ -555,8 +556,8 @@ xdata_filtered <- full_join(xdata_filtered, xdata_final_exclusion) |>
   filter(too_much_data_loss == "keep")
 
 # data loss?
-filter6 <- nrow(xdata_filtered) # 4065
-final_exclusions <- round((((filter5 - filter6) / filter6) * 100), 1) # 2.1% exclusion
+filter6 <- nrow(xdata_filtered) # 4213
+final_exclusions <- round((((filter5 - filter6) / filter6) * 100), 1) # 0% exclusion
 
 
 ```
