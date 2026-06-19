@@ -2,7 +2,9 @@
 title: "Descriptive Exploration"
 author: Timo Roettger
 date: 2026-06-06
-format: html
+format:
+  html:
+    embed-resources: true
 editor: visual
 ---
 
@@ -56,22 +58,24 @@ We explore how pitch perception changes as a function of the f0 slope (`delta_f`
 #| fig-cap: "Descriptive means for all combinations of f0 slope in Hz and slope duration in ms"
 
 xdata_agg <- xdata |> 
+  filter(delta_t != 0) |> 
   group_by(delta_f_raw, delta_t, participantID) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
   
 xdata_agg_all <- xdata |> 
+  filter(delta_t != 0) |> 
   group_by(delta_f_raw, delta_t) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
   
 descriptive_plot <- 
 ggplot(data = xdata_agg, 
        aes(x = delta_t,
            #x = delta_f_raw,
-           y = response_f_rel,
+           y = response_f_rel_st,
            color = as.ordered(delta_f_raw))) +
            #color = delta_t)) +
   geom_hline(data = xdata_agg_all |> filter(delta_t == 0),
-             aes(yintercept = response_f_rel),
+             aes(yintercept = response_f_rel_st),
              lty = "dashed",
              color = "black") +
   geom_line(data = xdata_agg_all,
@@ -83,14 +87,14 @@ ggplot(data = xdata_agg,
              aes(group = delta_f_raw),
              #aes(group = delta_t),
              lwd = 2) +
-  scale_y_continuous(limits = c(-20,20),
-                     breaks = seq(-20,20,10)) +
+  scale_y_continuous(limits = c(-3,3),
+                     breaks = seq(-3,3,1)) +
   scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
   #scale_color_viridis(option= "viridis") +
-  #scale_color_stepsn(colours = "viridis") +
+  #scale_color_steps(colours = "viridis") +
   labs(x = "\nslope duration in ms",
-       y = "average observed pitch response in Hz\n",
-       color = "f0 slope") +
+       y = "average observed pitch response in semitones\n",
+       color = "f0 slope in Hz") +
   guides(color = guide_legend(reverse = TRUE)) +
   theme_minimal()
   
@@ -109,8 +113,8 @@ hombert_renamed <- hombert |>
   rename(delta_f_raw = target,
          delta_t = slope_dur) |> 
   mutate(dataset = "Hombert (1975)",
-         response_f_rel = val_projected-150) |> 
-  select(delta_f_raw, delta_t, response_f_rel, dataset)
+         response_f_rel_st = val_st) |> 
+  select(delta_f_raw, delta_t, response_f_rel_st, dataset)
 
 xdata_agg_all_2 <- xdata_agg_all |> 
   filter(delta_t != 0) |> 
@@ -120,17 +124,16 @@ xdata_agg_all_2 <- xdata_agg_all |>
 hombert_comparison <- 
 ggplot(data = xdata_agg_all_2, 
        aes(x = delta_t,
-           y = response_f_rel,
+           y = response_f_rel_st,
            color = as.ordered(delta_f_raw))) +
   geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 2, color = "black") +
   geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 1.5) +
-  
   # --- UPDATED: AUTOMATICALLY SPREAD LABELS WITH CONNECTOR LINES ---
  geom_text_repel(
     data = xdata_agg_all_2 |> 
       group_by(dataset, delta_f_raw) |> 
       filter(delta_t == max(delta_t)), # Finds the end of *each individual line*
-    aes(label = delta_f_raw),
+    aes(label = as.ordered(delta_f_raw)),
     
     direction = "y",             # Move labels vertically to avoid overlap
     nudge_x = 25,                # Push labels out to the right
@@ -140,20 +143,15 @@ ggplot(data = xdata_agg_all_2,
     fontface = "bold",
     show.legend = FALSE
   ) +
-  
-  scale_y_continuous(limits = c(-40, 60),
-                     breaks = seq(-40, 60, 20),
-                     labels = paste0(seq(-40, 60, 20), " Hz")) +
-  
+  scale_y_continuous(limits = c(-8,8),
+                     breaks = seq(-8,8,2)) +
   # Expanded x-axis limits to 300 to give the repelled text and lines room to exist
   scale_x_continuous(breaks = seq(0, 250, 50), limits = c(0, 300)) + 
-  
   labs(title = "Comparison between original study and pilot",
        subtitle = "Hombert (1975, n = 10) vs. Pilot (n = 37)",
        x = "\nslope duration in ms",
-       y = "average observed pitch response in Hz\n",
+       y = "average observed pitch response in semitones\n",
        color = "f0 slope") +
-  
   facet_grid(~dataset) +
   theme_minimal() +
   theme(legend.position = "none") # Hide sidebar legend since lines are directly labeled
@@ -181,21 +179,21 @@ pilot_tbl <- xdata_agg_all_2 |>
   filter(delta_f_raw %in% c(-20,-10,10,20),
          delta_t %in% c(40,60,100),
          dataset == "Pilot") |> 
-  select(delta_f_raw, delta_t, response_f_rel) |> 
-  mutate(response_f_rel = round(response_f_rel,2)) |> 
+  select(delta_f_raw, delta_t, response_f_rel_st) |> 
+  mutate(response_f_rel_st = round(response_f_rel_st,2)) |> 
   pivot_wider(id_cols = delta_t,
               names_from = delta_f_raw,
-              values_from = response_f_rel)
+              values_from = response_f_rel_st)
 
 hombert_tbl <- xdata_agg_all_2 |> 
   filter(delta_f_raw %in% c(-20,-10,10,20),
          delta_t %in% c(40,60,100),
          dataset == "Hombert (1975)") |> 
-  select(delta_f_raw, delta_t, response_f_rel) |> 
-  mutate(response_f_rel = round(response_f_rel,2)) |> 
+  select(delta_f_raw, delta_t, response_f_rel_st) |> 
+  mutate(response_f_rel_st = round(response_f_rel_st,2)) |> 
   pivot_wider(id_cols = delta_t,
               names_from = delta_f_raw,
-              values_from = response_f_rel)
+              values_from = response_f_rel_st)
 
 knitr::kable(pilot_tbl) |> 
   add_header_above(c(
@@ -222,7 +220,7 @@ xdata_3d <- xdata_agg_all |>
   filter(delta_t != 0)
 
 # estimate a linear model
-xmdl <- lm(response_f_rel~ delta_t*delta_f_raw, xdata_3d)
+xmdl <- lm(response_f_rel_st~ delta_t*delta_f_raw, xdata_3d)
 
 # extract predictions
 newdata_grid <- expand_grid(
@@ -285,7 +283,7 @@ threeD_plot <-
                    tickvals = y_axis, 
                    ticktext = y_axis,
                    showgrid = TRUE),
-      zaxis = list(title = 'f0 response (Hz)')
+      zaxis = list(title = 'f0 response (ST)')
     ))
 
 threeD_plot

@@ -2,7 +2,9 @@
 title: "Data Cleaning"
 author: Timo Roettger
 date: 2026-06-06
-format: pdf
+format:
+  html:
+    embed-resources: true
 editor: visual
 ---
 
@@ -72,9 +74,6 @@ xdata <- xdata |>
          response_f_rel_abs = abs(response_f_rel),
          # relative to target
          response_f_prop = response_f_rel / delta_f,
-         # calculate actual f0 of presented tonal onset
-         presented_f = 150 + delta_f_raw,
-         presented_f_st = 12 * log2(presented_f/150),
          # recovered f0
          recovered_f0 = response_f_rel / delta_f_raw,
          # make is.correct as.numeric
@@ -125,23 +124,26 @@ xdata_catch <- xdata |>
             catch2 = mean(catch2),
             catch3 = mean(catch3),
             catch4 = mean(catch4),
-            all_catch = sum(catch1, catch2, catch3, catch4))
+            catch_amount = sum(catch1, catch2, catch3, catch4)) |> 
+  ungroup()
 
 # how many need to be removed?
 ## we remove all participants who have not correctly responded to at least 3 out of 4 catch trials
-catch_trial_exclusions <- round(((nrow(xdata_catch[xdata_catch$all_catch < 3,]) / nrow(xdata_catch)) * 100), 1) # 15% data loss 
+catch_trial_exclusions <- round(((nrow(xdata_catch[xdata_catch$catch_amount < 3,]) / nrow(xdata_catch)) * 100), 1) # 15% data loss 
 
 # merge for later
 xdata <- full_join(xdata, xdata_catch)
 
 # print table
 xdata_catch |> 
-  group_by(all_catch) |> 
+  group_by(catch_amount) |> 
   count()
 
 ```
 
-There were `r nrow(xdata_catch[xdata_catch$all_catch < 3,])` participants (`r catch_trial_exclusions` %) who failed to correctly respond to 3 out of 4 catch trials. These participants are excluded.
+There were `r nrow(xdata_catch[xdata_catch$all_catch < 3,])` participants (`r catch_trial_exclusions` %) who failed to correctly respond to 3 out of 4 catch trials. 
+
+These participants are excluded.
 
 ```{r}
 #| label: exclude-catch-trials
@@ -150,13 +152,11 @@ There were `r nrow(xdata_catch[xdata_catch$all_catch < 3,])` participants (`r ca
 # before exclusion
 all_data # 5040
 
-# remove all participants that did not get the catch trials correctly, i.e. both in pilot 1 and 3 out 4 in pilot 2
-xdata_filtered <- xdata |>
-  filter(all_catch > 2)
+xdata_after_attention_check <- xdata |> filter(catch_amount > 2)
 
 # data loss?
-filter1 <- nrow(xdata_filtered) # 4284
-(all_data - filter1) / all_data # ~15% participants excluded
+passed_attention_checks <- nrow(xdata_after_attention_check) # 4284
+(all_data - passed_attention_checks) / all_data # ~15% participants excluded
 
 ```
 
@@ -168,7 +168,7 @@ There were 14 trials per participant that presented a flat tone (`delta_t & delt
 #| label: "distribution-control"
 #| fig-cap: "Distribution of control trials on flat tones."
 
-xdata_filtered |> 
+xdata_after_attention_check |> 
   filter(delta_t == 0) |> 
   ggplot(aes(x = response_f_rel)) + 
   geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), 
@@ -195,7 +195,7 @@ Most responses to the control trials are correct followed by the adjacent pitch 
 #| label: "distribution-control-participants"
 #| fig-cap: "Distribution of control trials on flat tones per participant."
 
-xdata_filtered |> 
+xdata_after_attention_check |> 
   filter(delta_t == 0) |> 
   ggplot(aes(x = response_f_rel)) + 
   geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), 
@@ -214,13 +214,13 @@ xdata_filtered |>
 
 ```
 
-We can see that most distributions look unimodal-ish. Some participants have wider distributions than others, so we need to take this into account. As a first step we calculate the mean and SD of control responses per participant and store the information for later.
+We can see that most distributions look unimodal-ish. Some participants have wider distributions than others, so we need to take this into account. Let's calculate the mean and SD of control responses per participant and store the information for later.
 
 ```{r}
 #| label: "calc-control-participants"
 
 control_trials_distributions <- 
-  xdata_filtered |> 
+  xdata_after_attention_check |> 
   filter(delta_t == 0) |> 
   group_by(participantID) |> 
   summarise(control_response_bias = mean(response_f_rel),
@@ -230,28 +230,33 @@ print(control_trials_distributions |>  arrange(desc(abs(control_response_noise))
       
 ```
 
-Response biases vary quite a bit between participants but are generally very small. Consistency (measured as standard deviation) of their control responses also varies a lot. We suggest to simply flag all control trials with extreme values (below -10 Hz and above 10 Hz).
+Response biases vary quite a bit between participants but are generally very small. Consistency (measured as standard deviation) of their control responses also varies a lot. Having a strict exclusion criterion on a by-trial bias, could be too strict. So we define extreme responses to the control as a abs(20) response, which corresponds to four slider positions above/below the correct response. 
 
 ```{r}
 #| label: "flag-control-trials"
 
-extreme_controls <- xdata_filtered |> 
+# what we consider an extreme control response
+extreme_control_response <- 20
+exclusion_threshold <- 4
+
+extreme_controls <- xdata_after_attention_check |> 
   # merge and filter for control trials
   full_join(control_trials_distributions) |> 
   filter(delta_t == 0) |> 
   # group by participant and calculate total extreme trials
   group_by(participantID) |> 
   summarize(
-    # counts how many times the absolute value exceeds 10
-    n_extreme = sum(abs(response_f_rel) > 10, na.rm = TRUE), 
+    # counts how many times the absolute value exceeds extreme_control_response
+    n_extreme = sum(abs(response_f_rel) > extreme_control_response, na.rm = TRUE), 
     .groups = "drop"
   ) |> 
   # apply exclusion rule based on the total count
   mutate(
-    exclude_due_extreme = if_else(n_extreme > 4, "exclude", "keep")
+    exclude_too_many_extreme_controls = if_else(n_extreme > 4, "exclude", "keep")
   )
 
-xdata_filtered <- xdata_filtered |> full_join(extreme_controls)
+xdata_after_attention_check <- full_join(xdata_after_attention_check, extreme_controls)
+
 
 ```
 
@@ -262,19 +267,19 @@ We will remove participants who give extreme control responses in more than 30% 
 #| include: FALSE
 
 # before exclusion
-filter1 # 4284
+passed_attention_checks # 4284
 
 # remove all participants that did exhibit over 30% extreme control responses
-xdata_filtered <- xdata_filtered |>
-  filter(exclude_due_extreme != "exclude")
+xdata_after_controls_check <- xdata_after_attention_check |>
+  filter(exclude_too_many_extreme_controls != "exclude")
 
 # data loss?
-filter2 <- nrow(xdata_filtered) # 4284
-(filter1 - filter2) / filter1 # ~0% participants excluded
+control_trials_approved <- nrow(xdata_after_controls_check) # 4284
+(passed_attention_checks - control_trials_approved) / passed_attention_checks # ~0% participants excluded
 
 ```
 
-There were `r nrow(extreme_controls[extreme_controls$exclude_due_extreme == "exclude",])` participants who responded more than 4 times to the control task with extreme values (`abs(10)` Hz).
+There were `r nrow(extreme_controls[extreme_controls$exclude_too_many_extreme_controls == "exclude",])` participants who responded more than 4 times to the control task with extreme values (`abs(20)` Hz).
 
 ## Move dynamics
 
@@ -285,16 +290,16 @@ Participants were able to move the scale position as often as they wished. Each 
 #| include: FALSE
 
 # Define max amount of moves in data set
-max_moves <- max(lengths(strsplit(xdata_filtered$response_list, ","))) # 47
+max_moves <- max(lengths(strsplit(xdata_after_controls_check$response_list, ","))) # 47
 
 # double-check by counting commas in string
-max_moves == max(str_count(xdata_filtered$response_list, ",")) + 1 # TRUE
+max_moves == max(str_count(xdata_after_controls_check$response_list, ",")) + 1 # TRUE
 
 # Define the maximum column names
 num_cols <- paste0("move_sequence_", 1:max_moves)
 
 # Step 1: Split the comma-separated string into 30 distinct columns
-xdata_filtered_temp <- xdata_filtered |> 
+xdata_added_move_infos <- xdata_after_controls_check |> 
   separate_wider_delim(
     cols = response_list,
     delim = ",",
@@ -314,12 +319,12 @@ for (i in 1:29) {
   dist_name <- paste0("dist_", i, "_", i + 1)
   
   # Calculate absolute difference; returns NA if either column is NA
-  xdata_filtered_temp[[dist_name]] <- (xdata_filtered_temp[[col_right]] - xdata_filtered_temp[[col_left]])
+  xdata_added_move_infos[[dist_name]] <- (xdata_added_move_infos[[col_right]] - xdata_added_move_infos[[col_left]])
 }
 
 
 # Step 3: Calculate the mean and median distance for each row
-xdata_filtered_temp_final <- xdata_filtered_temp %>%
+xdata_added_move_infos <- xdata_added_move_infos %>%
   rowwise() %>%
   mutate(
     mean_distance   = mean(c_across(starts_with("dist_")), na.rm = TRUE),
@@ -334,7 +339,7 @@ xdata_filtered_temp_final <- xdata_filtered_temp %>%
 #| fig-cap: "Distribution of slider distance between subsequent moves."
 
 # long format to plot
-xdata_filtered_temp_final_long <- xdata_filtered_temp_final |> 
+xdata_added_move_infos_long <- xdata_added_move_infos |> 
   pivot_longer(
     cols = starts_with("dist_"),    # Target all the newly created distance columns
     names_to = "distance_pair",     # Column to store the old column names (e.g., "dist_1_2")
@@ -342,7 +347,7 @@ xdata_filtered_temp_final_long <- xdata_filtered_temp_final |>
     values_drop_na = TRUE           # Automatically drops the padded NA values
   )
 
-xdata_filtered_temp_final_long |> 
+xdata_added_move_infos_long |> 
   ggplot(aes(x = distance_value)) + 
   geom_histogram(fill = "grey",
                  color = "black", 
@@ -352,18 +357,17 @@ xdata_filtered_temp_final_long |>
 
 ```
 
-As expected, moves were mostly one step up or down to adjacent slider positions, resulting in a symmetric distribution around zero. High values indicate a strong jump and can be expected to occur at the beginning of a trial but not at the end. Let's look at the final move which ideally should not be a big jump.
-
+As expected, moves were mostly one step up or down to adjacent slider positions, resulting in a symmetric distribution around zero. High values indicate a strong jump and can be expected to occur at the beginning of a trial but not at the end. Let's look at the final move which ideally should not contains big jumps.
 
 ```{r}
 #| label: final-move
 #| fig-cap: "Distribution of slider distanct only for the last move before submitting."
 
-dist_matrix <- xdata_filtered_temp_final |>  
+dist_matrix <- xdata_added_move_infos |>  
   select(starts_with("dist_"))
 
 # use apply to find the last non-NA value in each row
-xdata_filtered_temp_final$final_distance <- 
+xdata_added_move_infos$final_distance <- 
   apply(dist_matrix, 1, function(row) {
   valid_indices <- which(!is.na(row))
   if(length(valid_indices) == 0) return(NA) # In case a row is completely empty
@@ -373,54 +377,39 @@ xdata_filtered_temp_final$final_distance <-
 })
 
 # histogram
-xdata_filtered_temp_final |> 
+xdata_added_move_infos |> 
+  filter(final_moves != 1) |> 
   ggplot(aes(x = final_distance)) + 
   geom_histogram(fill = "grey",
                  color = "black", 
-                 binwidth = 1) +
+                 binwidth = 1
+                 ) +
   labs(x = "slider distance between the prefinal and final move (before submitting)") +
   theme_minimal()
 
 ```
 
-There are indeed some larger values, up to jumps of 10 and higher. I think we should exclude moves that are beyond a certain threshold. Having said that, it could be that someone explores negative and positive scale position to get a better feel for them and then jumps to an earlier explored part of the scale, even if that means a larger jump? However, a jump of 8 slider positions corresponds to 40 Hz, corresponding to a jump from a flat tone to our most extreme f0 perturbation. We exclude all trials with a final jump as large, or larger than 40 Hz.
+There are indeed some larger values, up to jumps of 10 and higher. I think we should exclude moves that are beyond a certain threshold. Having said that, it could be that someone explores negative and positive scale positions to get a better feel for them and then jumps to an earlier explored part of the scale, even if that means a larger jump? However, a jump of 8 slider positions corresponds to 40 Hz, corresponding to a jump from a flat tone to our most extreme f0 perturbation. We exclude all trials with a final jump as large, or larger than 40 Hz.
 
 ```{r}
 #| label: exclude-too-large-final
 
 # before exclusion
-# filter2 # 4284
+control_trials_approved
 
 # remove all trials with too large final moves
-xdata_filtered <- xdata_filtered_temp_final |>
+xdata_after_final_moves <- xdata_added_move_infos |>
   filter(final_moves == 1 |
-           final_distance < 8 & 
-           final_distance > -8)
+         final_distance < 7 & 
+         final_distance > -7)
 
 # data loss?
-filter3 <- nrow(xdata_filtered) # 4268
-excluded_final <- round((((filter2 - filter3) / filter2) * 100), 1) # ~0.4% data excluded
+xdata_with_legit_final_moves <- nrow(xdata_after_final_moves) # 4260
+excluded_large_final_moves <- round((((control_trials_approved - xdata_with_legit_final_moves) / control_trials_approved) * 100), 1) # ~0.6% data excluded
 
 ```
 
-There were `r excluded_final`% of trials in which the final slider change was above 40 Hz. We exclude these trials.
-
-## Minimal reaction time
-
-```{r}
-#| label: exclude-minimal-rt
-
-# remove all trials that are below minimal reaction time which corresponds to the stimulus length: 
-xdata_filtered <- xdata_filtered |> 
-  filter(response_time > 0.15)
-
-# data loss?
-filter4 <- nrow(xdata_filtered) # 4207
-minimal_rt <- round((((filter3 - filter4) / filter3) * 100), 1) # 0% exclusion
-
-```
-
-All trials with a response time lower than the length of the auditory stimuli (\< 150 ms) are excluded on a trial-by-trial bases. This led to an exclusion of additional `r minimal_rt`%.
+There were `r xdata_with_legit_final_moves`% of trials in which the final slider change was above 40 Hz. We exclude these trials.
 
 ## Reaction time and amount of moves
 
@@ -430,7 +419,7 @@ Participants were able to make multiple moves before arriving at their final cho
 #| label: move-distribtuion
 #| fig-cap: "Distribution of amount of moves overall"
 
-xdata_filtered |> 
+xdata_after_final_moves |> 
   ggplot(aes(x = final_moves)) + 
   geom_histogram(color = "black",
                  fill = "white") +
@@ -446,13 +435,14 @@ Mostly 1-2 moves with a heavy right tale. Presumably this changed throughout the
 #| label: move-distribution-trial
 #| fig-cap: "Distribution of amount of moves across trials"
 
-xdata_filtered <- 
-  xdata_filtered |> 
+# wrangle the trial information
+xdata_after_final_moves <- 
+  xdata_after_final_moves |> 
   # make block information
   mutate(block = ifelse(!is.na(tone_trials.thisN), "first", "second"),
          trials = ifelse(block == "first", tone_trials.thisN, cv_trials.thisN + 63)) 
 
-xdata_filtered |> 
+xdata_after_final_moves |> 
   group_by(trials) |> 
   summarise(mean_move = mean(final_moves, na.rm = TRUE))  |> 
   ggplot(aes(x = trials, y = mean_move)) + 
@@ -474,7 +464,7 @@ The amount of moves decreases over the experiment as expected. Given that, we ex
 #| label: rt-distribution-trial
 #| fig-cap: "Distribution of RT across trials"
 
-xdata_filtered |> 
+xdata_after_final_moves |> 
   group_by(trials) |> 
   summarise(mean_rt = mean(response_time, na.rm = TRUE))  |> 
   ggplot(aes(x = trials, y = mean_rt)) + 
@@ -494,7 +484,7 @@ xdata_filtered |>
 #| label: exclude-outliers
 
 # now removing outliers for each participant in terms of RT
-xdata_filtered <- xdata_filtered |> 
+xdata_after_rt_cleaning <- xdata_after_final_moves |> 
   mutate(trial_bracket = cut(trials, 
                              breaks = 4, 
                              labels = seq(1,4,1))
@@ -506,8 +496,8 @@ xdata_filtered <- xdata_filtered |>
   ungroup()
 
 # data loss?
-filter5 <- nrow(xdata_filtered) # 4152
-outlier_rt <- round((((filter4 - filter5) / filter4) * 100), 1) # 1.3% exclusion
+after_rt_cleaning <- nrow(xdata_after_rt_cleaning) # 4205
+outlier_rt <- round((((xdata_with_legit_final_moves - after_rt_cleaning) / xdata_with_legit_final_moves) * 100), 1) # 1.3% exclusion
 
 ```
 
@@ -517,7 +507,7 @@ To account for outliers due to attentional lapses and distractions, we further r
 #| label: cleaned_rt-distribution-trial
 #| fig-cap: "Distribution of RT across trials after data trimming"
 
-xdata_filtered |> 
+xdata_after_rt_cleaning |> 
   group_by(trials) |> 
   summarise(mean_rt = mean(response_time, na.rm = TRUE))  |> 
   ggplot(aes(x = trials, y = mean_rt)) + 
@@ -533,41 +523,12 @@ xdata_filtered |>
 
 ```
 
-After these exclusions, we assess how many valid data points remain for each participant. If a participant has less than 60% of trials left, we exclude that participant from the sample as well.
-
-```{r}
-#| label: final-subject-removal
-
-data_loss_threshold = 0.6
-
-# How many data points left per participant?
-xdata_final_exclusion <- 
-  xdata_filtered |> 
-  group_by(participantID) |> 
-  count() |> 
-  mutate(too_much_data_loss = ifelse((n / 126) > data_loss_threshold, "keep", "exclude"))
-
-# How many need to be excluded?
-excluded_at_end <- 
-nrow(xdata_final_exclusion |> filter(too_much_data_loss == "exclude"))
-
-# merge for later
-xdata_filtered <- full_join(xdata_filtered, xdata_final_exclusion) |> 
-  filter(too_much_data_loss == "keep")
-
-# data loss?
-filter6 <- nrow(xdata_filtered) # 4213
-final_exclusions <- round((((filter5 - filter6) / filter6) * 100), 1) # 0% exclusion
-
-
-```
-
-This resulted in the exclusion of `r excluded_at_end` more participants.
+How much data did we overall lose?
 
 ```{r}
 #| label: overall-exclusion
 
-exclusions <- round((((all_data - filter6) / all_data) * 100), 1)  # 19.3% exclusion
+exclusions <- round((((all_data - after_rt_cleaning) / all_data) * 100), 1)  # 16.6% exclusion
 
 ```
 
@@ -576,7 +537,7 @@ All in all, we excluded `r exclusions`% of data.
 ```{r}
 
 ## Store clean dataframe
-xdata_wrangled <- xdata_filtered |> 
+xdata_wrangled <- xdata_after_rt_cleaning |> 
   select(labID, participantID, 
          # demographics
          birthyear, sex, 
@@ -591,12 +552,13 @@ xdata_wrangled <- xdata_filtered |>
          music_hour, met_score,
          # response
          final_rating, response_f_rel,
+         response_f_rel_st,
          stimuli_direction, response_dir,
          response_f, correct,
          recovered_f0,
          # predictors
          delta_t, delta_f, 
-         delta_f_raw
+         delta_f_raw, delta_f_raw_st
          ) 
 ```
 

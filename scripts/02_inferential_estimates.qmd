@@ -49,6 +49,8 @@ xdata <- read_csv("../data/derived/data_after_exclusion.csv")
 
 # Estimates for simplified model
 
+In Bayesian models, we approximate a posterior distribution, that is, a distribution of plausible parameter values, given the data, the model and any prior assumptions about the estimated parameter values. Because the approximation of a posterior distribution is computationally costly, we use algorithms to sample values from the posterior distribution. The practical consequence of this choice is that we do not calculate a single point estimate for a parameter, but we draw a sample of, in our case, 8,000 plausible values for that parameter and quantify our uncertainty about it by summarizing the distribution of values (see Vasishth et al. 2018, and Franke & Roettger 2019 for tutorials using speech science-specific examples). 
+
 We estimate a single contrast to make estimate a target sample size that allows us to reliably detect the difference we have found in the pilot.
 
 \(1\) $$y_{ij} = \beta_0 + \beta_{1xij} + u_{0j} + u_{1xij} + \epsilon_{ij}$$
