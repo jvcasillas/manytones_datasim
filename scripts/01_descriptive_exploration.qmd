@@ -23,7 +23,7 @@ knitr::opts_chunk$set(echo = FALSE,
 
 # read in libraries
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, htmlwidgets, webshot2, ggrepel)
+pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, htmlwidgets, webshot2, ggrepel, gghighlight)
 
 # function to ignoring the setting of the relative path below when knitting
 run_if_not_knitting <- function(expr) {
@@ -49,7 +49,7 @@ hombert <- read_csv("../data/derived/hombert.csv")
 
 # Descriptive exploration
 
-We explore how pitch perception changes as a function of the f0 slope (`delta_f`) and the slope duration (`delta_t`).
+We explore how pitch perception changes as a function of the f0 slope (`delta_f`) and the slope duration (`delta_t`). All analyses will work with the semitone transformed pitch responses.
 
 ## Overall means
 
@@ -60,42 +60,35 @@ We explore how pitch perception changes as a function of the f0 slope (`delta_f`
 xdata_agg <- xdata |> 
   filter(delta_t != 0) |> 
   group_by(delta_f_raw, delta_t, participantID) |> 
-  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE)) |> 
+  ungroup()
   
 xdata_agg_all <- xdata |> 
   filter(delta_t != 0) |> 
   group_by(delta_f_raw, delta_t) |> 
-  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
-  
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE)) |> 
+  ungroup() |> 
+  mutate(delta_f_raw_ord = as.ordered(delta_f_raw)) |> 
+  arrange(delta_t, delta_f_raw_ord)
+
 descriptive_plot <- 
-ggplot(data = xdata_agg, 
+ggplot(data = xdata_agg_all, 
        aes(x = delta_t,
-           #x = delta_f_raw,
            y = response_f_rel_st,
-           color = as.ordered(delta_f_raw))) +
-           #color = delta_t)) +
-  geom_hline(data = xdata_agg_all |> filter(delta_t == 0),
-             aes(yintercept = response_f_rel_st),
-             lty = "dashed",
-             color = "black") +
-  geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw),
-             #aes(group = delta_t),
-             lwd = 2.5,
-            color = "black") +
-  geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw),
-             #aes(group = delta_t),
-             lwd = 2) +
-  scale_y_continuous(limits = c(-3,3),
-                     breaks = seq(-3,3,1)) +
-  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
-  #scale_color_viridis(option= "viridis") +
-  #scale_color_steps(colours = "viridis") +
+           color = delta_f_raw_ord,       
+           group = delta_f_raw_ord)) +    
+  
+  geom_line(lwd = 2.5, color = "black") + # Background outline
+  geom_line(lwd = 2) +                    # Colored line
+  
+  scale_y_continuous(limits = c(-3, 3), breaks = seq(-3, 3, 1)) +
+  scale_x_continuous(breaks = unique(xdata$delta_t)) +
   labs(x = "\nslope duration in ms",
        y = "average observed pitch response in semitones\n",
        color = "f0 slope in Hz") +
-  guides(color = guide_legend(reverse = TRUE)) +
+  # Note: You might need to toggle reverse = TRUE/FALSE here 
+  # now that the underlying data order is flipped!
+  guides(color = guide_legend(reverse = FALSE)) + 
   theme_minimal()
   
 descriptive_plot
@@ -113,19 +106,25 @@ hombert_renamed <- hombert |>
   rename(delta_f_raw = target,
          delta_t = slope_dur) |> 
   mutate(dataset = "Hombert (1975)",
-         response_f_rel_st = val_st) |> 
+         response_f_rel_st = val_st
+         ) |> 
   select(delta_f_raw, delta_t, response_f_rel_st, dataset)
 
 xdata_agg_all_2 <- xdata_agg_all |> 
-  filter(delta_t != 0) |> 
+  select(-delta_f_raw_ord) |> 
   mutate(dataset = "Pilot") |> 
-  full_join(hombert_renamed)
+  full_join(hombert_renamed) |> 
+  mutate(delta_f_raw_ord = as.ordered(delta_f_raw))
+  
 
 hombert_comparison <- 
 ggplot(data = xdata_agg_all_2, 
        aes(x = delta_t,
            y = response_f_rel_st,
-           color = as.ordered(delta_f_raw))) +
+           color = delta_f_raw_ord)) +
+  # geom_vline(xintercept = unique(xdata_agg_all$delta_t),
+  #            lty = "dashed",
+  #            color = "grey") +
   geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 2, color = "black") +
   geom_line(aes(group = interaction(delta_f_raw, dataset)), lwd = 1.5) +
   # --- UPDATED: AUTOMATICALLY SPREAD LABELS WITH CONNECTOR LINES ---
@@ -133,7 +132,7 @@ ggplot(data = xdata_agg_all_2,
     data = xdata_agg_all_2 |> 
       group_by(dataset, delta_f_raw) |> 
       filter(delta_t == max(delta_t)), # Finds the end of *each individual line*
-    aes(label = as.ordered(delta_f_raw)),
+    aes(label = delta_f_raw_ord),
     
     direction = "y",             # Move labels vertically to avoid overlap
     nudge_x = 25,                # Push labels out to the right
@@ -143,12 +142,12 @@ ggplot(data = xdata_agg_all_2,
     fontface = "bold",
     show.legend = FALSE
   ) +
-  scale_y_continuous(limits = c(-8,8),
-                     breaks = seq(-8,8,2)) +
+  scale_y_continuous(limits = c(-7,7),
+                     breaks = seq(-6,6,2)) +
   # Expanded x-axis limits to 300 to give the repelled text and lines room to exist
   scale_x_continuous(breaks = seq(0, 250, 50), limits = c(0, 300)) + 
   labs(title = "Comparison between original study and pilot",
-       subtitle = "Hombert (1975, n = 10) vs. Pilot (n = 37)",
+       subtitle = "Hombert (1975, n = 10) vs. Pilot (n = 34)",
        x = "\nslope duration in ms",
        y = "average observed pitch response in semitones\n",
        color = "f0 slope") +
@@ -216,8 +215,11 @@ Plotting linear prediction of pilot results in three dimensions:
 ```{r}
 #| label: 3d-plot
 
-xdata_3d <- xdata_agg_all |> 
-  filter(delta_t != 0)
+xdata_3d <- xdata |> 
+  filter(delta_t != 0) |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE)) |> 
+  ungroup()
 
 # estimate a linear model
 xmdl <- lm(response_f_rel_st~ delta_t*delta_f_raw, xdata_3d)
@@ -229,11 +231,11 @@ newdata_grid <- expand_grid(
 )
 
 # extract predictions along with standard errors / fit intervals
-raw_predictions <- predict(xmdl)
+raw_predictions <- as_tibble(predict(xmdl))
 
 # bind the predictions back onto your grid mapping for a complete table
 final_table <- newdata_grid  |> 
-  bind_cols(as_tibble(raw_predictions))
+  bind_cols(raw_predictions)
 
 # set up matrix
 z_matrix <- matrix(final_table$value, nrow = 8, ncol = 7, byrow = TRUE)
@@ -304,18 +306,18 @@ Let's have a look at individual differences across the pilot data:
 
 xdata_agg <- xdata |> 
   group_by(delta_f_raw, delta_t, participantID) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
 
 xdata_reference <- xdata |> 
   filter(delta_t == 0) |> 
   group_by(participantID) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
 
 # plot delta_t against response
 #subject_plot_1 <- 
 ggplot(data = xdata_agg, 
        aes(x = delta_t,
-           y = response_f_rel,
+           y = response_f_rel_st,
            color = as.ordered(delta_f_raw))) +
   geom_line(aes(group = delta_f_raw),
             lwd = 1) +
@@ -324,7 +326,7 @@ ggplot(data = xdata_agg,
   scale_x_continuous(breaks = c(20,60,100,140)) +
   #scale_color_viridis_c(option= "viridis") +
   geom_hline(data = xdata_reference,
-             aes(yintercept = response_f_rel),
+             aes(yintercept = response_f_rel_st),
              lty = "dashed",
              color = "black") +
   facet_wrap(~participantID, 
@@ -350,7 +352,7 @@ An alternative perspective can be gained from switching the aesthetic mappings:
 # plot delta_f_raw against response
 ggplot(data = xdata_agg, 
        aes(x = delta_f_raw,
-           y = response_f_rel,
+           y = response_f_rel_st,
            color = as.ordered(delta_t))) +
   geom_line(aes(group = delta_t),
             lwd = 1) +
@@ -379,21 +381,21 @@ To quantify these individual differences, we calculate one metric across all con
 
 xdata <- 
   xdata |> 
-    mutate(recovered_f0 = response_f_rel / delta_f_raw) 
+    mutate(recovered_f0_st = response_f_rel_st / delta_f_raw_st) 
 
 xagg_r <- xdata |> 
   group_by(delta_f_raw, participantID) |> 
-  summarise(recovered_f0 = mean(recovered_f0)) |> 
+  summarise(recovered_f0_st = mean(recovered_f0_st)) |> 
   filter(delta_f_raw != 0)
 
 xagg_r_all <- xdata |> 
   group_by(delta_f_raw) |> 
-  summarise(recovered_f0 = mean(recovered_f0)) |>   
+  summarise(recovered_f0_st = mean(recovered_f0_st)) |>   
   filter(delta_f_raw != 0)
 
   ggplot(xagg_r,
          aes(x = delta_f_raw,
-             y = recovered_f0)) +
+             y = recovered_f0_st)) +
   geom_line(aes(group = participantID),
             color = "grey",
             alpha = 0.5) +
@@ -417,17 +419,41 @@ xagg_r_all <- xdata |>
 
 ```
 
+```{r}
+
+ggplot(xagg_r,
+         aes(x = delta_f_raw,
+             y = recovered_f0_st)) +
+  geom_line(aes(group = participantID),
+            color = "#dd1c77",
+            linewidth = 1) +
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("grey85", 1), linewidth = 0.3)) +
+  geom_hline(yintercept = c(0, 0.33), 
+               lty = "dashed") +
+  facet_wrap(~participantID, ncol = 6) +
+  scale_x_continuous(breaks = c(-40, 0, 40)) +
+  scale_y_continuous(breaks = c(-0.8, 0, 0.6),
+                       labels = paste0((c(-0.8, 0, 0.6) * 100), "%")) +
+    labs(x = "f0 perturbation",
+         y = "percentage of recovered f0") +
+    theme_minimal()
+
+```
+
 It does not look like as if the amount of f0 perturbation matters for the recovered f0. As opposed to the literature, the average recovered pitch lies between 0 and 10% and not at 1/3 as predicted by Rossi's work.
 
 ```{r}
 
 xagg_r_participants <- xdata |> 
   filter(delta_f_raw != 0) |> 
+  group_by(participantID, delta_t, delta_f_raw) |> 
+  summarise(recovered_f0_st = mean(recovered_f0_st)) |> 
   group_by(participantID) |> 
-  summarise(recovered_f0 = mean(recovered_f0))
+  summarise(recovered_f0_st = mean(recovered_f0_st))
 
 ggplot(xagg_r_participants,
-         aes(x = recovered_f0)) +
+         aes(x = recovered_f0_st)) +
   geom_point(y = 0,
              size = 3,
              pch = 21,
@@ -440,7 +466,7 @@ ggplot(xagg_r_participants,
                      labels = paste0(seq(-0.1,0.4,0.1)*100, "%")) +
   geom_vline(lty = c("dashed", "dotted"),
              xintercept = c(0,1/3)) +
-  labs(title = "Individual differences for recovered f0",
+  labs(title = "Individual differences for recovered f0 across all conditions",
        subtitle = "",
        y = "",
        x = "percentage of recovered f0") + 
@@ -450,4 +476,4 @@ ggplot(xagg_r_participants,
 
 ```
 
-Looking at he distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with three outliers that recover f0 above 20%.
+Looking at the distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with three outliers that recover f0 above 20%.

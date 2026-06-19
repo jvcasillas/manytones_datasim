@@ -73,20 +73,33 @@ xdata_red <- xdata |>
 # contrast-code with -10 -> -.5
 contrasts(xdata_red$delta_f_raw) <- c(-.5,.5)
 
-# brms formula
-# formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participant))
-
 # brms formula for student
-formula_d_f0 = bf(response_f_rel ~ delta_f_raw + (delta_f_raw | participantID), nu = 4)
+formula_d_f0 = bf(response_f_rel_st ~ delta_f_raw + (delta_f_raw | participantID), nu = 4)
 
-## We used regularizing, weakly informative priors for relevant parameters (Gelman, Simpson, & Betancourt 2017). The width of those regularizing priors was chosen based on existing models on the perception of dynamic pitch changes (Rossi 1971, 1978) suggesting that the perceived pitch corresponds to a time point at ⅔ of the pitch change, corresponding to ⅓ of the Δf0. Thus, for the chosen Δf0s (-10 Hz  vs 10 Hz), we would expect reasonable ceiling performances for them to be -3.33 Hz and -3.33 Hz, respectively, rendering the expected difference between the two conditions at 6.7 Hz.
+## We used regularizing, weakly informative priors for relevant parameters (Gelman, Simpson, & Betancourt 2017). The width of those regularizing priors was chosen based on existing models on the perception of dynamic pitch changes (Rossi 1971, 1978) suggesting that the perceived pitch corresponds to a time point at ⅔ of the pitch change, corresponding to ⅓ of the Δf0. Thus, for the chosen Δf0s (-10 Hz  vs 10 Hz), we would expect reasonable ceiling performances for them to be 3.33 Hz and -3.33 Hz, respectively, rendering the expected difference between the two conditions at 6.7 Hz. At this reference level, the predicted ceiling difference is 0.76 semitones, thus we pick half of that (= 0.38) as our scaling factor for the priors.
+# The slider spans 100 Hz to 200 Hz, that means the maximally possibly difference is abs(12) semitones.
+
+ceiling = 12 * log2(((1/3 * 10) + 150)/150)
+
+min_response = 12 * log2(100/150)
+max_response = 12 * log2(200/150)
+
+max_delta = max_response - min_response
 
 # my priors 
 # NOTE: could even specify 2/3 as upper boundary
 mypriors <- c(
-              prior(cauchy(0, 3.33), class = "b", ub = 100, lb = -100),
-              prior(cauchy(0, 3.33), class = "Intercept", ub = 50, lb = -50),
-              prior(cauchy(0, 3.33), class = "sd", ub = 100),
+              prior(cauchy(0, 0.38), 
+                    class = "b", 
+                    lb = -12,
+                    ub = 12),
+              prior(cauchy(0, 0.38), 
+                    class = "Intercept", 
+                    lb = -7.01955, 
+                    ub = 4.98045),
+              prior(cauchy(0, 0.38), 
+                    class = "sd", 
+                    ub = 12),
               prior(lkj(1), class = "cor")
               )
 
@@ -125,12 +138,12 @@ The priors look good, all possible values are represented, but priors down weigh
                     fill = NA,
                     color = NA,
                     outline_bars = FALSE) +
-  geom_vline(xintercept = c(-target_cond, target_cond),
+  geom_vline(xintercept = c(-ceiling, ceiling),
              lty = "dashed") +
   labs(x = "\n prior pitch difference between conditions",
        y = "") +
-  scale_x_continuous(limits = c(-50,50),
-                     breaks = seq(-50,50,25)) +
+  scale_x_continuous(limits = c(-12,12),
+                     breaks = seq(-12,12,6)) +
   theme_minimal() +
   theme(axis.text.y = element_blank())
 
@@ -141,6 +154,7 @@ The priors look good, all possible values are represented, but priors down weigh
 
 ```{r}
 #| label: run_model
+#| include: FALSE
 
 # Run model with generous amount of iterations
 simple_model_d_f0 <- brm(
@@ -149,7 +163,7 @@ simple_model_d_f0 <- brm(
   file = "../models/model_simple_df0",
   family = student,
   seed = 123,
-  iter = 4000,
+  iter = 8000,
   warmup = 2000,
   prior = mypriors, 
   control = list(adapt_delta = 0.9,
@@ -167,7 +181,7 @@ The model estimates the critical effect to be `r round(fixef(simple_model_d_f0)[
 #| fig-cap: "Sampling chains mixed well."
 
 # check caterpillar
-plot(simple_model_d_f0).
+plot(simple_model_d_f0)
 
 ```
 
@@ -182,7 +196,10 @@ pp_check(simple_model_d_f0, ndraws = 100) # looks great
 
 ```
 
+
 ## Plot estimates
+
+The model estimates a `r round(fixef(simple_model_d_f0)[2], 2)` semitone difference between -10 and 10 Hz with a 95% Credible Interval of `r round(fixef(simple_model_d_f0)[2,3], 2)` to `r round(fixef(simple_model_d_f0)[2,4], 2)` semitones.
 
 ```{r}
 #| label: plot_model
@@ -200,7 +217,6 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
               pred_0975 = quantile(.epred, prob = 0.975)) |> 
   ggplot(aes(x = as.factor(delta_f_raw),
            y = pred_m,
-           #group = as.numeric(delta_t),
            color = as.factor(delta_f_raw))) +
   geom_errorbar(aes(ymin = pred_0025,
                     ymax = pred_0975),
@@ -211,25 +227,27 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
   geom_point(size = 3) +
   scale_color_viridis_d(option="viridis") +
   scale_x_discrete(labels = paste0(c(-10,10), " Hz")) +
-  scale_y_continuous(limits = c(-10,10),
-                     breaks = seq(-10,10,5),
-                     labels = paste0(seq(-10,10, 5), " Hz")) +
+  scale_y_continuous(limits = c(-1,1),
+                     breaks = seq(-1,1,0.25),
+                     labels = paste0(seq(-1.00,1.00,0.25), " STs")) +
   labs(x = "\npresented pitch difference",
-       y = "predicted pitch rating\n",
+       y = "predicted pitch rating in semitones\n",
        fill = "delta f0\n") +
   guides(colour = "none") +
   theme_minimal()
 
 ```
 
-# Inference using Bayes Factor (through Savage-Dickey)
+# Inference using Bayes Factor (i.e. through evidence ratio)
 
 ```{r}
 #| label: inference
 
 # bf directional 
 hyp1 <- hypothesis(simple_model_d_f0, "delta_f_raw1 > 0")
-hyp1$hypothesis[[6]]
-# BF = 108.6
+BF <- hyp1$hypothesis[[6]]
+# BF = 157
 
 ```
+
+The Bayes Factor, assessing evidence for a positive directional pitch perception is `r round(BF,1)`, suggesting extreme evidence for the alternative hypothesis.
