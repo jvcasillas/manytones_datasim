@@ -1,8 +1,13 @@
 ---
-title: "02_model_comparison"
-format: html
+title: "Comparing three different models to model psychometric function"
+author: Timo Roettger
+date: 2026-06-06
+format:
+  html:
+    embed-resources: true
 editor: visual
 ---
+
 
 ```{r setup}
 #| label: setup
@@ -10,12 +15,19 @@ editor: visual
 
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, 
-               #bridgesampling, 
+               bridgesampling, 
                bayestestR)
 
-# Set the current working directory to the one where this file is
-current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
-setwd(current_working_dir)
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# set the current working directory to the one where this file lives
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
 
 # options to increase efficiency of brms models (optional)
 options(brms.backend = "cmdstanr")
@@ -23,177 +35,57 @@ options(mc.cores = parallel::detectCores())
 
 ```
 
-# Data & Wrangling
-
-Wrangle the data, generate derivatives for the analysis.
-
 ```{r}
-#| label: data_wrangling
+#| label: load-data
 
 # load in data 2025/09/11
-xdata <- read_csv("../data/data_after_exclusion.csv")
-
-```
-
-# Exploration of landscape
-
-## 2D
-
-We explore how pitch perception changes as a function of `delta_t` and `delta_f.`
-
-```{r}
-#| label: descriptive_exploration
-
-xdata_agg <- xdata |> 
-  group_by(delta_f_raw, delta_t, participant) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
-  
-xdata_agg_all <- xdata |> 
-  group_by(delta_f_raw, delta_t) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
-  
-descriptive_plot <- 
-ggplot(data = xdata_agg, 
-       aes(x = delta_t,
-           #x = delta_f_raw,
-           y = response_f_rel,
-           color = delta_f_raw)) +
-           #color = delta_t)) +
-  geom_point(data = xdata_agg_all) +
-  geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw),
-             #aes(group = delta_t),
-             lwd = 2.5,
-            color = "black") +
-  geom_line(data = xdata_agg_all,
-             aes(group = delta_f_raw),
-             #aes(group = delta_t),
-             lwd = 2) +
-  # scale_y_continuous(limits = c(-20,20),
-  #                    breaks = seq(-20,20,10)) +
-  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
-  #scale_x_continuous(breaks = c(unique(xdata$delta_f_raw))) +
-  scale_color_viridis_c(option= "viridis") +
-  geom_hline(yintercept = 0.25,
-             lty = "dashed") +
-  #scale_color_stepsn(colours = "viridis") +
-  labs(x = "\nslope duration in ms",
-       y = "average observed pitch response in Hz\n",
-       color = "pitch difference") +
-  theme_minimal()
-  
-descriptive_plot
-
-```
-
-## 3D
-
-Slight non-linear relationship with delta_t. Let's look at it in 3-dimensional space:
-
-```{r}
-#| label: descriptive_exploration_2
-
-xdata_agg_all <- xdata |> 
-  group_by(delta_f_raw_st, delta_t) |> 
-  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE))
-
-# set up matrix
-z_matrix <- matrix(xdata_agg_all$response_f_rel_st, nrow = 8, ncol = 6, byrow = TRUE)
-
-x_axis <- unique(xdata_agg_all$delta_t)
-y_axis <- unique(xdata_agg_all$delta_f_raw_st)
-
-plot_ly(x = ~x_axis, y = ~y_axis, z = ~z_matrix, 
-        type = "surface",
-        colors = 'RdPu') |> 
-  layout( scene = list(
-    xaxis = list(title = 'Onset Duration (ms)', tickvals = x_axis, ticktext = x_axis),
-    yaxis = list(title = 'Onset Frequency in STs', tickvals = list(-5,-4,-3,-2,-1,0,1,2,3,4,5), ticktext = list(-5,-4,-3,-2,-1,0,1,2,3,4,5)),
-    zaxis = list(title = 'Response STs')
-  ))
-
-```
-
-## Individual differences
-
-```{r}
-#| label: descriptive_exploration_individuals
-
-xdata_agg <- xdata |> 
-  #filter(rt != 0) |> 
-  group_by(participant) |>
-  filter(exclude == mean(rt == 0) > 0.2) |> 
-  group_by(delta_f_raw, delta_t, participant) |> 
-  summarise(response_f_rel = mean(response_f_rel, na.rm = TRUE))
-
-# plot delta_t against response
-subject_plot_1 <- 
-ggplot(data = xdata_agg, 
-       aes(x = delta_t,
-           y = response_f_rel,
-           color = delta_f_raw)) +
-  geom_line(aes(group = delta_f_raw),
-            lwd = 1) +
-  # scale_y_continuous(limits = c(-20,20),
-  #                    breaks = seq(-20,20,10)) +
-  scale_x_continuous(breaks = c(unique(xdata$delta_t))) +
-  scale_color_viridis_c(option= "viridis") +
-  geom_hline(yintercept = 0.25,
-             lty = "dashed") +
-   facet_wrap(~participant, 
-             ncol = 6, 
-             scales = "free") + 
-  #scale_color_stepsn(colours = "viridis") +
-  labs(x = "\nslope duration in ms",
-       y = "average observed pitch response in Hz\n",
-       color = "pitch difference") +
-  theme_minimal()
-  
-# plot delta_f_raw against response
-subject_plot_2 <- 
-ggplot(data = xdata_agg, 
-       aes(x = delta_f_raw,
-           y = response_f_rel,
-           color = delta_t)) +
-  geom_line(aes(group = delta_t),
-            lwd = 1) +
-  # scale_y_continuous(limits = c(-20,20),
-  #                    breaks = seq(-20,20,10)) +
-  scale_color_viridis_c(option= "viridis") +
-  geom_hline(yintercept = 0.25,
-             lty = "dashed") +
-  facet_wrap(~participant, 
-             ncol = 6, 
-             scales = "free") + 
-  #scale_color_stepsn(colours = "viridis") +
-  labs(x = "\npitch difference in Hz",
-       y = "average observed pitch response in Hz\n",
-       color = "slope duration") +
-  theme_minimal()
-
-subject_plot_1
-subject_plot_2
+xdata <- read_csv("../data/derived/data_after_exclusion.csv") |> 
+  filter(delta_t != 0)
 
 ```
 
 # Modelling
+
+We will attempt to identify properties of the underlying psychometric function that describes the relationship between perceived f0 responses, Δf0, and Δt. To that end, we systematically compare different models alongside their assumptions about this relationship. Hombert (1975) suggests a non-linear increase of perceived pitch as a function of Δt that approaches an asymptote towards higher Δt values, i.e. the benefit of a longer tonal slope decreases. We thus construct and compare three model types:
+- a generalized linear mixed effects model that assumes a linear relationship between response and predictors (see Fig. #),
+- a generalized linear mixed effects model that assumes a monotonic ordinal relationships (e.g. pitch response increases with Δt and/or Δf0 but does not do so linearly),
+- a generalized additive mixed effects model that allows for more complex non-linear relationships.
 
 ## Linear model
 
 ```{r}
 #| label: linear_model
 
-# contrast code
-
 # brms formula (full)
-formula_linear = bf(response_f_rel ~ delta_t * delta_f_raw + (delta_t * delta_f_raw | participant), nu = 4)
+formula_linear = brms::bf(response_f_rel_st ~ delta_t * delta_f_raw
+                          + (delta_t * delta_f_raw | participantID),
+                          nu = 4)
 
+# priors to specify
+get_prior(formula_linear, family = student, data = xdata)
+
+## priors
+# the maximum change in f0 per unit of pitch slope should be 1/3 of the f0 perturbation, for delta-f = 1 Hz, this corresponds to 0.04 semitones which we chose as the width of for a weakly informative prior for both beta and the by-participants slopes of pitch slope.
+# for delta-t, we don't have theoretical predictions for any effect magnitude. Hombert's data suggest a increase of pitch recovery with slope duration. Based on a linear  data, there is a 0.021 ST increase per ms in his strongest pitch perturbation (delta-f = 70 Hz). So our priors should scale for effects even stronger as the ones reported by Hombert. We choose 0.021 as the width of for a weakly informative prior for both beta and the by-participants slopes of slope duration.
 
 # my priors 
 mypriors <- c(
-              prior(cauchy(0, 1), class = "b"),
-              prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
-              prior(cauchy(0, 10), class = "sd", lb = 0),
+              # intercept allows for a lot of variation for baseline perception, but only allows values that are possible in the design 
+              prior(cauchy(0, 3), class = "Intercept", 
+                    lb = -7.01955, ub = 4.98045),
+              prior(cauchy(0, 0.04), class = "b", coef = "delta_f_raw"),
+              prior(cauchy(0, 0.021), class = "b", coef = "delta_t"),
+              prior(cauchy(0, 0.04), class = "b", coef = "delta_t:delta_f_raw"),
+              prior(cauchy(0, 0.04), class = "sd",
+                    group = "participantID",
+                    coef = "delta_f_raw"),
+              prior(cauchy(0, 0.012), class = "sd",
+                    group = "participantID",
+                    coef = "delta_t"),
+              prior(cauchy(0, 0.04), class = "sd",
+                    group = "participantID",
+                    coef = "delta_t:delta_f_raw"),
+              prior(cauchy(0, 3), class = "sd"),
               prior(lkj(1), class = "cor")
               )
 
@@ -201,9 +93,8 @@ mypriors <- c(
 linear_model <- brm(
   formula_linear,
   data = xdata,
-  file = "../models/linear_model",
+  file = "../models/Q1_linear_model",
   family = student,
-  #family = gaussian,
   seed = 123,
   iter = 4000,
   warmup = 2000,
@@ -213,14 +104,18 @@ linear_model <- brm(
                  max_treedepth = 12)
   )
 
+# FYI: it took my machine a while ()
+
 # check caterpillar
 plot(linear_model) # mixes well
 
 # check samples against data
-pp_check(linear_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
+pp_check(linear_model, ndraws = 100, type = "dens_overlay")
 
 # "issue" with discrete responses. however we do not expect this to bias estimates
 # to keep models computationally feasible, we refrain from using discrete version of the student-t regression
+
+print(linear_model, digits = 5)
 
 ```
 
@@ -228,8 +123,6 @@ pp_check(linear_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
 
 ```{r}
 #| label: monotonic_model
-
-xdata <- xdata_filtered
 
 # code predictors as ordered factors
 xdata$delta_f_raw_o <- factor(xdata$delta_f_raw, 
@@ -240,16 +133,35 @@ xdata$delta_t_o <- factor(xdata$delta_t,
                           ordered = TRUE)
 
 # brms formula (full)
-formula_mono = bf(response_f_rel ~ mo(delta_f_raw_o) * mo(delta_t_o) + (mo(delta_f_raw_o) * mo(delta_t_o) | participant), nu = 4)
+formula_mono = brms::bf(response_f_rel_st ~ mo(delta_f_raw_o) * mo(delta_t_o) + (mo(delta_f_raw_o) * mo(delta_t_o) | participantID), nu = 4)
 
-# get priors
-get_prior(formula_mono, xdata, family = "student")
+get_prior(formula_mono, family = student, data = xdata)
+
+## priors
+# the maximum change in f0 per ordered unit of delta_f_raw should be 1/3 of the f0 perturbation, 
+# for delta-f from -10 to 10, this corresponds to 0.75 semitones. We chose this as the width of for the prior for both beta and the by-participants slopes of pitch slope.
+# for delta-t, we don't have theoretical predictions for effect magnitude. Hombert's data suggest a increase of pitch recovery with slope duration. Based on his data, there is a 0.021 ST increase per ms in his strongest pitch perturbation (delta-f = 70 Hz). So our priors should scale for effects even stronger as the ones reported by Hombert. In this case one step corresponds to 20 ms, so 0.42 STs.
 
 # my priors 
 mypriors <- c(
-              prior(cauchy(0, 10), class = "b"),
-              prior(cauchy(0, 10), class = "Intercept", lb = -45, ub = 45),
-              prior(cauchy(0, 10), class = "sd", lb = 0),
+              # intercept allows for a lot of variation for baseline perception, but only allows values that are possible in the design 
+              prior(cauchy(0, 3), class = "Intercept", 
+                     lb = -7.01955, ub = 4.98045),
+              # prior(cauchy(0, 1), class = "b"),
+              # prior(cauchy(0, 1), class = "sd"),
+              prior(cauchy(0, 0.75), class = "b", coef = "modelta_f_raw_o"),
+              prior(cauchy(0, 0.42), class = "b", coef = "modelta_t_o"),
+              prior(cauchy(0, 0.75), class = "b", coef = "modelta_f_raw_o:modelta_t_o"),
+              prior(cauchy(0, 0.75), class = "sd",
+                    group = "participantID",
+                    coef = "modelta_f_raw_o"),
+              prior(cauchy(0, 0, 0.42), class = "sd",
+                    group = "participantID",
+                    coef = "modelta_t_o"),
+              prior(cauchy(0, 0.75), class = "sd",
+                    group = "participantID",
+                    coef = "modelta_f_raw_o:modelta_t_o"),
+              prior(cauchy(0, 3), class = "sd"),
               prior(lkj(1), class = "cor")
               )
 
@@ -257,7 +169,7 @@ mypriors <- c(
 mono_model <- brm(
   formula_mono,
   data = xdata,
-  file = "../models/mono_model",
+  file = "../models/Q1_mono_model",
   family = student,
   seed = 123,
   iter = 4000,
@@ -273,23 +185,28 @@ plot(mono_model) # mixes well
 
 # check samples against data
 pp_check(mono_model, ndraws = 100, type = "dens_overlay") 
-# "issue" with discrete responses as well as "spikyness", which could technically be fixed by student error term?
+# "issue" with discrete response
 
 ```
 
-## scam
+## SCAM
+
+NOT DONE
 
 ```{r}
 #| label: scam_model
 
-xdata <- xdata_filtered
-
-
+# subset:
+my_subset <- factor(unique(xdata$participantID))
+chosen_levels <- sample(levels(my_subset), size = 10)
+xdata_sub <- xdata[xdata$participantID %in% chosen_levels,]
 
 # brms formula (full)
-formula_scam = bf(response_f_rel ~ delta_t * delta_f_raw +
+formula_scam = brms::bf(response_f_rel ~ delta_t * delta_f_raw +
                     s(delta_t, bs = "mpi") +
-                    s(delta_f_raw, bs = "mpi"))
+                    s(delta_f_raw, bs = "mpi") 
+                    #+ random
+                    )
 
 # get priors
 get_prior(formula_scam, xdata, family = "student")
@@ -335,7 +252,7 @@ conditional_effects(scam_model)
 #| label: exponential_model
 
 # brms formula (Marton)
-formula_exp = bf(response_f_rel ~ a + b*(( (delta_t - x0) / (250 - x0))^inv_logit(c)),
+formula_exp = bf(response_f_rel_st ~ a + b*(( (delta_t - x0) / (250 - x0))^inv_logit(c)),
      a ~ 1,
      b ~ delta_f_raw + (1|participant),
      c ~ delta_f_raw + (1|participant),
@@ -349,8 +266,8 @@ get_prior(formula_exp, family = "student", xdata)
 # my priors 
 mypriors <- c(
               #prior(cauchy(0, 10), nlpar = "a"),
-              prior(cauchy(0, 10), nlpar = "b"),
-              prior(cauchy(0, 10), nlpar = "c")#,
+              prior(cauchy(0, 3), nlpar = "b"),
+              prior(cauchy(0, 3), nlpar = "c")#,
               #prior(cauchy(0, 30), nlpar = "x0"),
               #prior(cauchy(0, 10), class = "sd", lb = 0)#,
               #prior(lkj(1), class = "cor")
@@ -386,37 +303,55 @@ pp_check(exp_model, ndraws = 100, type = "dens_overlay") + xlim(-50,50)
 #| label: gam
 
 # brms formula?
-formula_gam = bf(response_f_rel ~ delta_t * delta_f_raw +
-                   s(delta_t, bs = "bs", k = 6) +
-                   s(delta_f_raw, bs = "bs", k = 6) +
+formula_gam = brms::bf(response_f_rel_st ~ delta_t *
+                         delta_f_raw +
+                   #s(delta_t, bs = "bs", k = 6) +
+                   #s(delta_f_raw, bs = "bs", k = 6) +
                  t2(delta_t, delta_f_raw),
                  nu = 4)
 
+
 # get priors
-get_prior(formla_gam, xdata)
+get_prior(formula_gam, xdata, family = "student")
 
 # my priors 
 mypriors <- c(
-              prior(cauchy(0, 10), class = "b"),
-              prior(cauchy(0, 10), class = "Intercept"),
-              prior(cauchy(0, 10), class = "sds")#,
-             # prior(cauchy(0, 10), class = "sd", lb = 0),
-             # prior(lkj(1), class = "cor")
+               prior(cauchy(0, 3), class = "Intercept", 
+                     lb = -7.01955, ub = 4.98045),
+              # prior(cauchy(0, 1), class = "b"),
+              # prior(cauchy(0, 1), class = "sd"),
+              prior(cauchy(0, 3), class = "b", coef = "delta_f_raw"),
+              prior(cauchy(0, 3), class = "b", coef = "delta_t"),
+              prior(cauchy(0, 3), class = "b", coef = "delta_t:delta_f_raw"),
+              prior(cauchy(0, 3), class = "b", coef = "t2delta_tdelta_f_raw_1"),
+              prior(cauchy(0, 3), class = "b", coef = "t2delta_tdelta_f_raw_2"),
+              prior(cauchy(0, 3), class = "b", coef = "t2delta_tdelta_f_raw_3"),
+              # prior(cauchy(0, 0.75), class = "sd",
+              #       group = "participantID",
+              #       coef = "modelta_f_raw_o"),
+              # prior(cauchy(0, 0, 0.42), class = "sd",
+              #       group = "participantID",
+              #       coef = "modelta_t_o"),
+              # prior(cauchy(0, 0.75), class = "sd",
+              #       group = "participantID",
+              #       coef = "modelta_f_raw_o:modelta_t_o"),
+              prior(cauchy(0, 3), class = "sds")#,
+              #prior(lkj(1), class = "cor")
               )
 
 # Run model 
 gam_model <- brm(
   formula_gam,
   data = xdata,
-  file = "../models/gam_model",
+  #file = "../models/Q1_gam_model",
   family = student,
   seed = 123,
   iter = 4000,
   warmup = 2000,
   save_pars = save_pars(all = TRUE),
   prior = mypriors, 
-  control = list(adapt_delta = 0.99,
-                 max_treedepth = 12)
+  control = list(adapt_delta = 0.999,
+                 max_treedepth = 15)
   )
 
 # check caterpillar
@@ -445,27 +380,57 @@ bf_bridge
 
 ```
 
-# Plot model (currently mono)
+# Plot models
+
+Here is the descriptive plot:
+
+```{r}
+xdata_agg <- xdata |> 
+  filter(delta_t != 0) |> 
+  group_by(delta_f_raw, delta_t, participantID) |> 
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE)) |> 
+  ungroup()
+
+xdata_agg_all <- xdata |> 
+  filter(delta_t != 0) |> 
+  group_by(delta_f_raw, delta_t) |> 
+  summarise(response_f_rel_st = mean(response_f_rel_st, na.rm = TRUE)) |> 
+  ungroup() |> 
+  mutate(delta_f_raw_ord = as.ordered(delta_f_raw)) |> 
+  arrange(delta_t, delta_f_raw_ord)
+
+descriptive_plot <- 
+ggplot(data = xdata_agg_all, 
+       aes(x = delta_t,
+           y = response_f_rel_st,
+           color = delta_f_raw_ord,       
+           group = delta_f_raw_ord)) +    
+  geom_line(lwd = 2.5, color = "black") + # Background outline
+  geom_line(lwd = 2) +                    # Colored line
+  scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1.5, 1.5, 0.5)) +
+  scale_x_continuous(breaks = unique(xdata$delta_t)) +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in semitones\n",
+       color = "f0 slope in Hz") +
+  # Note: You might need to toggle reverse = TRUE/FALSE here 
+  # now that the underlying data order is flipped!
+  guides(color = guide_legend(reverse = TRUE)) + 
+  theme_minimal()
+  
+descriptive_plot
+
+```
+
+Extract estimates from linear model
 
 ```{r}
 
-#xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
-
-# create new data for prediction
-# newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
-#                        delta_f_raw_o = unique(xdata$delta_f_raw_o)
-#                        ) |> 
-#   filter(!is.na(delta_t_o),
-#          !is.na(delta_f_raw_o))
-
 newdata <- expand_grid(delta_t = unique(xdata$delta_t),
-                       delta_f_raw = unique(xdata$delta_f_raw)
-                       )
-
-
+                       delta_f_raw = unique(xdata$delta_f_raw))
+                     
 # Visualize
 #prediction_exp <- exp_model |> 
-prediction_mono <- scam_model |> 
+prediction <- linear_model |> 
   epred_draws(newdata = newdata,
               re_formula = NA) |> 
     #group_by(delta_t_o, delta_f_raw_o) |> 
@@ -478,28 +443,112 @@ prediction_mono <- scam_model |>
   mutate(delta_t = as.numeric(as.character(delta_t)),
          delta_f_raw = as.numeric(as.character(delta_f_raw)))
 
-#model_plot <- 
-prediction_mono |> 
+lm_model_plot <- 
+prediction |> 
   ggplot(aes(x = delta_t,
              y = pred_m,
-             color = delta_f_raw,
-             group = delta_f_raw)) +
+             color = as.ordered(delta_f_raw),
+             group = as.ordered(delta_f_raw))) +
   geom_point() +
   geom_line(lwd = 2.5, 
              color = "black") +
   geom_line(lwd = 2) +
-  scale_x_continuous(breaks = c(40,60,80,100,120,250)) +
-  scale_color_viridis(option= "viridis") +
+    scale_x_continuous(breaks = unique(xdata$delta_t)) +
+    scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1.5, 1.5, 0.5)) +
   labs(x = "\nslope duration in ms",
-       y = "predicted response in Hz\n",
-       color = "pitch difference") +
+       y = "average observed pitch response in semitones\n",
+       color = "f0 slope in Hz") +
+  guides(color = guide_legend(reverse = TRUE)) + 
   theme_minimal()
-  
-model_plot
 
-data_v_model <- descriptive_plot / model_plot +
-  plot_layout(guides = 'collect',
-              axes = 'collect')
+lm_model_plot
+
+```
+
+Extract estimates from mono model
+
+```{r}
+#xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
+
+newdata <- expand_grid(delta_t_o = unique(xdata$delta_t_o),
+                       delta_f_raw_o = unique(xdata$delta_f_raw_o))
+                       
+# Visualize
+prediction <- mono_model |> 
+  epred_draws(newdata = newdata,
+              re_formula = NA) |> 
+    group_by(delta_t_o, delta_f_raw_o) |> 
+    summarise(pred_m = mean(.epred, na.rm = TRUE),
+              pred_0025 = quantile(.epred, prob = 0.025),
+              pred_0975 = quantile(.epred, prob = 0.975)) |> 
+  rename(delta_t = delta_t_o,
+         delta_f_raw = delta_f_raw_o) |>
+  mutate(delta_t = as.numeric(as.character(delta_t)),
+         delta_f_raw = as.numeric(as.character(delta_f_raw)))
+
+mono_model_plot <- 
+prediction |> 
+  ggplot(aes(x = delta_t,
+             y = pred_m,
+             color = as.ordered(delta_f_raw),
+             group = as.ordered(delta_f_raw))) +
+  geom_point() +
+  geom_line(lwd = 2.5, 
+             color = "black") +
+  geom_line(lwd = 2) +
+    scale_x_continuous(breaks = unique(xdata$delta_t)) +
+      scale_y_continuous(limits = c(-1.5, 1.5), breaks = seq(-1.5, 1.5, 0.5)) +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in semitones\n",
+       color = "f0 slope in Hz") +
+  guides(color = guide_legend(reverse = TRUE)) + 
+  theme_minimal()
+
+mono_model_plot
+
+```
+
+Extract estimates from gam model
+
+```{r}
+#xdata$preds <- posterior_summary(posterior_epred(mono_model_d_f0))[,1]
+
+newdata <- expand_grid(
+  delta_t = seq(min(xdata$delta_t), max(xdata$delta_t), length.out = 50),
+  delta_f_raw = unique(xdata$delta_f_raw))
+                       
+# Visualize
+prediction <- newdata %>%
+  add_epred_draws(gam_model) %>%
+  # Summarize the posterior distribution for each combination
+  median_qi(.epred)
+
+gam_model_plot <- 
+prediction |> 
+  ggplot(aes(x = delta_t,
+             y = .epred,
+             color = as.ordered(delta_f_raw),
+             group = as.ordered(delta_f_raw))) +
+  geom_point() +
+  geom_line(lwd = 2.5, 
+             color = "black") +
+  geom_line(lwd = 2) +
+    scale_x_continuous(breaks = unique(xdata$delta_t)) +
+      scale_y_continuous(limits = c(-6,6), breaks = seq(-5, 3, 0.5)) +
+  labs(x = "\nslope duration in ms",
+       y = "average observed pitch response in semitones\n",
+       color = "f0 slope in Hz") +
+  guides(color = guide_legend(reverse = TRUE)) + 
+  theme_minimal()
+
+gam_model_plot
+
+```
+
+```{r}
+data_v_model <- (descriptive_plot | lm_model_plot) / (mono_model_plot | gam_model_plot) +
+  plot_layout(axes = 'collect_y',
+              guides = 'collect')
 
 data_v_model
 

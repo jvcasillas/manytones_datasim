@@ -29,7 +29,7 @@ Load in data.
 #| label: data_wrangling
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/data_after_exclusion.csv")
+xdata <- read_csv("../data/derived/data_after_exclusion.csv")
 
 ```
 

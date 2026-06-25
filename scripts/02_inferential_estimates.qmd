@@ -41,7 +41,7 @@ options(mc.cores = parallel::detectCores())
 ```
 
 ```{r}
-#| label: data_wrangling
+#| label: load-data
 
 # load in data 2026/06/01
 xdata <- read_csv("../data/derived/data_after_exclusion.csv")
@@ -238,7 +238,7 @@ newdata_delta_f0 <- expand_grid(delta_f_raw = c(-target_cond,target_cond))
 
 ```
 
-# Inference using Bayes Factor (i.e. through evidence ratio)
+## Inference using Bayes Factor (i.e. through evidence ratio)
 
 ```{r}
 #| label: inference

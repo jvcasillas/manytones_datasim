@@ -134,6 +134,23 @@ knitr::kable(hombert_tbl) |>
 
 ```
 
+
+```{r}
+#| label: linear-model
+
+hombert_lm <- lm(val_st ~ target * slope_dur, data = hombert)
+
+newdata <- expand_grid(target = unique(hombert$target),
+                       slope_dur = unique(hombert$slope_dur))
+                     
+newdata$predicted_val_st <- predict(hombert_lm, newdata = newdata)
+
+# get strongest effect (target == 70)
+newdata |> filter(target == 70)
+
+```
+
+
 ```{r}
 #| label: store-data
 #| include: FALSE
