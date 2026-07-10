@@ -12,7 +12,7 @@ editor: visual
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, here, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux, quantreg)
+pacman::p_load(brms, ggplot2, quantreg,here, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux, quantreg)
 
 # global seed 
 set.seed(211)
@@ -210,19 +210,6 @@ write.csv(loop_results, here::here("data", "derived", "BF_sample_size_calculatio
 
 loop_results <- read_csv(here::here("data", "derived", "BF_sample_size_calculation.csv")) |> 
   mutate(BF = ifelse(is.infinite(BF), 8000, BF))
-  
-# linear model of results
-lm_bf <- lm(log(BF) ~ subj_n, loop_results)
-
-# predict
-new_data <- data.frame(subj_n = seq(5, 100, by = 1))
-
-# get the fitted values AND the standard errors from the model
-pred_raw <- predict(lm_bf, newdata = new_data, se.fit = TRUE)
-
-#----
-  
-
 
 # fit models for the 5th percentiles on the original scale
 # (Or on log(BF) if you prefer, but rq can handle the raw data directly!)
@@ -245,7 +232,7 @@ myPalette <- colorRampPalette(colors = c("#f1eef6","#d4b9da",
                                          "#c994c7","#df65b0",
                                          "#dd1c77","#980043"))
 
-BF_sample_plot <- 
+#BF_sample_plot <- 
 ggplot(data = empirical_bounds,
        aes(x = subj_n, y = BF)) +
   geom_point(data = loop_results,
