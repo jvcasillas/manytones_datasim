@@ -2,7 +2,10 @@
 title: "Extracting Homberts values"
 author: Timo Roettger
 date: 2026-06-06
-format: html
+format:
+  html:
+    embed-resources: true
+    toc: true       
 editor: visual
 ---
 
@@ -20,7 +23,7 @@ knitr::opts_chunk$set(echo = FALSE,
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(viridis, tidyverse, knitr, kableExtra)
+pacman::p_load(viridis, here, tidyverse, knitr, kableExtra)
 
 ```
 
@@ -134,10 +137,10 @@ knitr::kable(hombert_tbl) |>
 
 ```
 
-
 ```{r}
 #| label: linear-model
 
+# linear model of semitone transformed responses
 hombert_lm <- lm(val_st ~ target * slope_dur, data = hombert)
 
 newdata <- expand_grid(target = unique(hombert$target),
@@ -150,11 +153,10 @@ newdata |> filter(target == 70)
 
 ```
 
-
 ```{r}
 #| label: store-data
 #| include: FALSE
 
-write_csv(hombert, "../data/derived/hombert.csv")
+write_csv(hombert, here::here("data", "derived", "hombert.csv"))
 
 ```

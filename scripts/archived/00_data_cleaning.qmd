@@ -1,0 +1,596 @@
+---
+title: "Data Cleaning"
+author: Timo Roettger
+date: 2026-06-06
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+```{r}
+#| include: FALSE
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+
+```
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+
+# read in libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(viridis, tidyverse, rstudioapi, scales, knitr, kableExtra)
+
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# set the current working directory to the one where this file lives
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+```{r}
+#| label: load-data
+#| include: FALSE
+
+# latest pilot from 2026/06/01
+xdata <- read.csv("../data/raw/merged_260601.csv", colClasses = c("response_list" = "character"))
+
+# before exclusion
+all_data <- nrow(xdata) # 5040
+
+# how many subjects
+length(unique(xdata$participantID)) # 40
+
+# data points per subject
+xtabs(~xdata$participantID)
+
+```
+
+```{r}
+#| label: data-wrangling
+
+xdata <- xdata |> 
+  mutate(
+         # make delta_f positive / negative
+         delta_f_raw = ifelse(stimuli_direction == "p", delta_f, delta_f * -1),
+         # make delta_f_raw into STs (reference 150Hz)
+         delta_f_raw_st = 12 * log2((150+delta_f_raw)/150),
+         # make response_f relative to baseline 150Hz      
+         response_f_rel = response_f - 150,
+         # make response_f into STs (reference 150Hz)
+         response_f_rel_st = 12 * log2((150+response_f_rel)/150),
+         # make response_f absolute without sign differences
+         response_f_rel_abs = abs(response_f_rel),
+         # relative to target
+         response_f_prop = response_f_rel / delta_f,
+         # recovered f0
+         recovered_f0 = response_f_rel / delta_f_raw,
+         # make is.correct as.numeric
+         correct = as.numeric(is_correct),
+         # make part ID a char
+         participantID = as.character(participantID)
+         ) 
+
+# for later, we want to distribute the control condition randomly across delta_t
+xdata <- xdata  |> 
+  group_by(participantID) |> 
+  mutate(
+    # 1. Generate the exact 14-item shuffled pool for THIS participant
+    shuffled_pool = list(sample(rep(seq(20, 140, 20), each = 2))),
+    
+    # 2. Track which control trial number we are on for this participant
+    control_index = NA_integer_,
+    control_index = ifelse(delta_t == 0, cumsum(delta_t == 0), NA)
+  ) |> 
+  rowwise() |> 
+  mutate(
+    # 3. Pull exactly one unique item out of the pool for each control row
+    delta_t = ifelse(
+      !is.na(control_index), 
+      shuffled_pool[[control_index]], 
+      delta_t
+    )
+  ) |> 
+  ungroup() |> 
+  select(-shuffled_pool, -control_index) # Clean up temporary columns
+
+
+# rename participant column to identify in plots
+unique_IDs <- unique(xdata$participantID)
+n_unique   <- length(unique_IDs)
+
+# generate a pool of unique, short random strings
+# This creates 4-character alphanumeric strings (e.g., "4x9b")
+set.seed(42) 
+random_strings <- replicate(n_unique, {
+  paste(sample(c(0:9, letters), 4, replace = TRUE), collapse = "")
+})
+
+# create a named lookup dictionary (Maps: "apple" -> "4x9b")
+lookup_table <- setNames(random_strings, unique_IDs)
+
+# swap the original strings for the random ones
+xdata$participantID <- lookup_table[xdata$participantID]
+
+```
+
+# Data cleaning
+
+In the following, we will explore catch trials, control trials, reaction times and dynamics related to how often and how people moved the slider to clean the data. We will suggest and implement exclusion criteria.
+
+## Attention checks
+
+There were 4 attention checks in which participants were asked to indicate a particular slide position. We flag all responses that are more than one slider position of the target slider position.
+
+```{r}
+#| label: catch-trials
+
+# catch trials (four catch trials)
+xdata_catch <- xdata |> 
+  # we implement a lenient criterion that considers imprecise responses valid
+  mutate(catch1 = ifelse(catch_tone_loop_res %in% c(0,1), 1, 0),
+         catch2 = ifelse(catch_tone_end_res %in% c(21,20), 1, 0),
+         catch3 = ifelse(catch_cv_loop_res %in% c(0,1), 1, 0),
+         catch4 = ifelse(catch_cv_end_res %in% c(0,1), 1, 0)) |> 
+  group_by(participantID) |> 
+  summarise(catch1 = mean(catch1),
+            catch2 = mean(catch2),
+            catch3 = mean(catch3),
+            catch4 = mean(catch4),
+            catch_amount = sum(catch1, catch2, catch3, catch4)) |> 
+  ungroup()
+
+# how many need to be removed?
+## we remove all participants who have not correctly responded to at least 3 out of 4 catch trials
+catch_trial_exclusions <- round(((nrow(xdata_catch[xdata_catch$catch_amount < 3,]) / nrow(xdata_catch)) * 100), 1) # 15% data loss 
+
+# merge for later
+xdata <- full_join(xdata, xdata_catch)
+
+# print table
+xdata_catch |> 
+  group_by(catch_amount) |> 
+  count()
+
+```
+
+There were `r nrow(xdata_catch[xdata_catch$catch_amount < 3,])` participants (`r catch_trial_exclusions` %) who failed to correctly respond to 3 out of 4 catch trials.
+
+These participants are excluded.
+
+```{r}
+#| label: exclude-catch-trials
+#| include: FALSE
+
+# before exclusion
+all_data # 5040
+
+xdata_after_attention_check <- xdata |> filter(catch_amount > 2)
+
+# data loss?
+passed_attention_checks <- nrow(xdata_after_attention_check) # 4284
+(all_data - passed_attention_checks) / all_data # ~15% participants excluded
+
+```
+
+## Control trials
+
+There were 14 trials per participant that presented a flat tone (`delta_t & delta_f = 0`) for which the correct response was 0 Hz.
+
+```{r}
+#| label: "distribution-control"
+#| fig-cap: "Distribution of control trials on flat tones."
+
+xdata_after_attention_check |> 
+  filter(delta_f_raw == 0) |> 
+  ggplot(aes(x = response_f_rel)) + 
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), 
+                 binwidth = 5, 
+                 fill = "grey", 
+                 color = "black") +
+  stat_bin(binwidth = 5, 
+           geom = "text", 
+           aes(y = after_stat(count) / sum(after_stat(count)), 
+               label = percent(after_stat(count) / sum(after_stat(count)), 
+                               accuracy = 1)), 
+           vjust = -0.5, 
+           size = 3.5) +
+  scale_x_continuous(breaks = seq(-50,50,5)) +
+  labs(x = "Responses to control trials",
+       y = "Proportion") +
+  theme_minimal()
+
+```
+
+Most responses to the control trials are correct followed by the adjacent pitch responses (-5 Hz and 5 Hz) with a slight bias towards higher values. We expect that some people might have slight response biases (hearing a flat tone as slightly rising or falling) but consistently judge the flat pitch with some level of symmetric-ish noise. Ideally we identify participants that do not show such a pattern, indicating either inattentiveness or other non-desirable response behavior.
+
+```{r}
+#| label: "distribution-control-participants"
+#| fig-cap: "Distribution of control trials on flat tones per participant."
+
+xdata_after_attention_check |> 
+  filter(delta_f_raw == 0) |> 
+  ggplot(aes(x = response_f_rel)) + 
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), 
+                 binwidth = 5, 
+                 fill = "white", 
+                 color = "black") +
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), 
+                 binwidth = 5, 
+                 fill = "white", 
+                 color = "black") +
+  scale_x_continuous(breaks = seq(-50,50,50)) +
+  facet_wrap(~participantID) +
+  labs(x = "Responses to control trials",
+       y = "Proportion") +
+  theme_minimal()
+
+```
+
+We can see that most distributions look unimodal-ish. Some participants have wider distributions than others, so we need to take this into account. Let's calculate the mean and SD of control responses per participant and store the information for later.
+
+```{r}
+#| label: "calc-control-participants"
+
+control_trials_distributions <- 
+  xdata_after_attention_check |> 
+  filter(delta_f_raw == 0) |> 
+  group_by(participantID) |> 
+  summarise(control_response_bias = mean(response_f_rel),
+            control_response_noise = sd(response_f_rel))
+
+print(control_trials_distributions |>  arrange(desc(abs(control_response_noise))))
+      
+```
+
+Response biases vary quite a bit between participants but are generally very small. Consistency (measured as standard deviation) of their control responses also varies a lot. Having a strict exclusion criterion on a by-trial bias, could be too strict. So we define extreme responses to the control as a abs(20) response, which corresponds to four slider positions above/below the correct response.
+
+```{r}
+#| label: "flag-control-trials"
+
+# what we consider an extreme control response
+extreme_control_response <- 20
+exclusion_threshold <- 4
+
+extreme_controls <- xdata_after_attention_check |> 
+  # merge and filter for control trials
+  full_join(control_trials_distributions) |> 
+  filter(delta_f_raw == 0) |> 
+  # group by participant and calculate total extreme trials
+  group_by(participantID) |> 
+  summarize(
+    # counts how many times the absolute value exceeds extreme_control_response
+    n_extreme = sum(abs(response_f_rel) > extreme_control_response, na.rm = TRUE), 
+    .groups = "drop"
+  ) |> 
+  # apply exclusion rule based on the total count
+  mutate(
+    exclude_too_many_extreme_controls = if_else(n_extreme > 4, "exclude", "keep")
+  )
+
+xdata_after_attention_check <- full_join(xdata_after_attention_check, extreme_controls)
+
+```
+
+We will remove participants who give extreme control responses in more than 30% of control trials corresponding to 4 out of 14 control trials.
+
+```{r}
+#| label: exclude-control-fails
+#| include: FALSE
+
+# before exclusion
+passed_attention_checks # 4284
+
+# remove all participants that did exhibit over 30% extreme control responses
+xdata_after_controls_check <- xdata_after_attention_check |>
+  filter(exclude_too_many_extreme_controls != "exclude")
+
+# data loss?
+control_trials_approved <- nrow(xdata_after_controls_check) # 4284
+(passed_attention_checks - control_trials_approved) / passed_attention_checks # ~0% participants excluded
+
+```
+
+There were `r nrow(extreme_controls[extreme_controls$exclude_too_many_extreme_controls == "exclude",])` participants who responded more than 4 times to the control task with extreme values (`abs(20)` Hz).
+
+## Move dynamics
+
+Participants were able to move the scale position as often as they wished. Each move was recorded as a string in `response_list`.
+
+```{r}
+#| label: wrangle-trial-sequence
+#| include: FALSE
+
+# Define max amount of moves in data set
+max_moves <- max(lengths(strsplit(xdata_after_controls_check$response_list, ","))) # 47
+
+# double-check by counting commas in string
+max_moves == max(str_count(xdata_after_controls_check$response_list, ",")) + 1 # TRUE
+
+# Define the maximum column names
+num_cols <- paste0("move_sequence_", 1:max_moves)
+
+# Step 1: Split the comma-separated string into 30 distinct columns
+xdata_added_move_infos <- xdata_after_controls_check |> 
+  separate_wider_delim(
+    cols = response_list,
+    delim = ",",
+    names = num_cols,
+    too_few = "align_start",  # Fills missing spaces with NA up to 30 cols
+    too_many = "drop"         # Drops elements if there happen to be more than 30
+  ) |> 
+  # Convert all the newly created columns from text to numeric
+  mutate(across(all_of(num_cols), as.numeric))
+
+
+# Step 2: Calculate numerical distance between adjacent pairs
+# Running a vector-based loop 
+for (i in 1:29) {
+  col_left  <- paste0("move_sequence_", i)
+  col_right <- paste0("move_sequence_", i + 1)
+  dist_name <- paste0("dist_", i, "_", i + 1)
+  
+  # Calculate absolute difference; returns NA if either column is NA
+  xdata_added_move_infos[[dist_name]] <- (xdata_added_move_infos[[col_right]] - xdata_added_move_infos[[col_left]])
+}
+
+
+# Step 3: Calculate the mean and median distance for each row
+xdata_added_move_infos <- xdata_added_move_infos %>%
+  rowwise() %>%
+  mutate(
+    mean_distance   = mean(c_across(starts_with("dist_")), na.rm = TRUE),
+    median_distance = median(c_across(starts_with("dist_")), na.rm = TRUE)
+  ) %>%
+  ungroup() 
+
+```
+
+```{r}
+#| label: hist-trial-sequence
+#| fig-cap: "Distribution of slider distance between subsequent moves."
+
+# long format to plot
+xdata_added_move_infos_long <- xdata_added_move_infos |> 
+  pivot_longer(
+    cols = starts_with("dist_"),    # Target all the newly created distance columns
+    names_to = "distance_pair",     # Column to store the old column names (e.g., "dist_1_2")
+    values_to = "distance_value",   # Column to store the actual calculated distances
+    values_drop_na = TRUE           # Automatically drops the padded NA values
+  )
+
+xdata_added_move_infos_long |> 
+  ggplot(aes(x = distance_value)) + 
+  geom_histogram(fill = "grey",
+                 color = "black", 
+                 binwidth = 1) +
+  labs(x = "slider distance between subsequent moves") +
+  theme_minimal()
+
+```
+
+As expected, moves were mostly one step up or down to adjacent slider positions, resulting in a symmetric distribution around zero. High values indicate a strong jump and can be expected to occur at the beginning of a trial but not at the end. Let's look at the final move which ideally should not contains big jumps.
+
+```{r}
+#| label: final-move
+#| fig-cap: "Distribution of slider distanct only for the last move before submitting."
+
+dist_matrix <- xdata_added_move_infos |>  
+  select(starts_with("dist_"))
+
+# use apply to find the last non-NA value in each row
+xdata_added_move_infos$final_distance <- 
+  apply(dist_matrix, 1, function(row) {
+  valid_indices <- which(!is.na(row))
+  if(length(valid_indices) == 0) return(NA) # In case a row is completely empty
+  
+  last_index <- max(valid_indices)
+  return(row[last_index])
+})
+
+# histogram
+xdata_added_move_infos |> 
+  filter(final_moves != 1) |> 
+  ggplot(aes(x = final_distance)) + 
+  geom_histogram(fill = "grey",
+                 color = "black", 
+                 binwidth = 1
+                 ) +
+  labs(x = "slider distance between the prefinal and final move (before submitting)") +
+  theme_minimal()
+
+```
+
+There are indeed some larger values, up to jumps of 10 and higher. I think we should exclude moves that are beyond a certain threshold. Having said that, it could be that someone explores negative and positive scale positions to get a better feel for them and then jumps to an earlier explored part of the scale, even if that means a larger jump? However, a jump of 8 slider positions corresponds to 40 Hz, corresponding to a jump from a flat tone to our most extreme f0 perturbation. We exclude all trials with a final jump as large, or larger than 40 Hz.
+
+```{r}
+#| label: exclude-too-large-final
+
+# before exclusion
+control_trials_approved
+
+# remove all trials with too large final moves
+xdata_after_final_moves <- xdata_added_move_infos |>
+  filter(final_moves == 1 |
+         final_distance < 7 & 
+         final_distance > -7)
+
+# data loss?
+xdata_with_legit_final_moves <- nrow(xdata_after_final_moves) # 4260
+excluded_large_final_moves <- round((((control_trials_approved - xdata_with_legit_final_moves) / control_trials_approved) * 100), 1) # ~0.6% data excluded
+
+```
+
+There were `r xdata_with_legit_final_moves`% of trials in which the final slider change was above 40 Hz. We exclude these trials.
+
+## Reaction time and amount of moves
+
+Participants were able to make multiple moves before arriving at their final choice. How much did they move?
+
+```{r}
+#| label: move-distribtuion
+#| fig-cap: "Distribution of amount of moves overall"
+
+xdata_after_final_moves |> 
+  ggplot(aes(x = final_moves)) + 
+  geom_histogram(color = "black",
+                 fill = "white") +
+  labs(x = "amount of moves before submitting the answer",
+       y = "") +
+  theme_minimal()
+
+```
+
+Mostly 1-2 moves with a heavy right tale. Presumably this changed throughout the experiment.
+
+```{r}
+#| label: move-distribution-trial
+#| fig-cap: "Distribution of amount of moves across trials"
+
+# wrangle the trial information
+xdata_after_final_moves <- 
+  xdata_after_final_moves |> 
+  # make block information
+  mutate(block = ifelse(!is.na(tone_trials.thisN), "first", "second"),
+         trials = ifelse(block == "first", tone_trials.thisN, cv_trials.thisN + 63)) 
+
+xdata_after_final_moves |> 
+  group_by(trials) |> 
+  summarise(mean_move = mean(final_moves, na.rm = TRUE))  |> 
+  ggplot(aes(x = trials, y = mean_move)) + 
+  geom_point(pch = 21,
+             size = 2,
+              color = "white",
+              fill = alpha("black", 0.5)) +
+  geom_smooth(method = "lm", 
+              se = FALSE) +
+  labs(x = "trial number",
+       y = "average amount of moves") +
+  theme_minimal()
+
+```
+
+The amount of moves decreases over the experiment as expected. Given that, we expect reaction times to substantially decrease over the course of the experiment. When excluding trials based on reaction times, we will take this into consideration.
+
+```{r}
+#| label: rt-distribution-trial
+#| fig-cap: "Distribution of RT across trials"
+
+xdata_after_final_moves |> 
+  group_by(trials) |> 
+  summarise(mean_rt = mean(response_time, na.rm = TRUE))  |> 
+  ggplot(aes(x = trials, y = mean_rt)) + 
+  geom_point(pch = 21,
+             size = 2,
+              color = "white",
+              fill = alpha("black", 0.5)) +
+  geom_smooth(method = "lm", 
+              se = FALSE) +
+  labs(x = "trial number",
+       y = "average reaction time in seconds") +
+  theme_minimal()
+
+```
+
+```{r}
+#| label: exclude-outliers
+
+# now removing outliers for each participant in terms of RT
+xdata_after_rt_cleaning <- xdata_after_final_moves |> 
+  mutate(trial_bracket = cut(trials, 
+                             breaks = 4, 
+                             labels = seq(1,4,1))
+  ) |> 
+  group_by(participantID, trial_bracket) |> 
+  # 4 SDs trim
+  filter(response_time < (median(response_time) + 4 * sd(response_time)) & 
+         response_time > (median(response_time) - 4 * sd(response_time))) |>
+  ungroup()
+
+# data loss?
+after_rt_cleaning <- nrow(xdata_after_rt_cleaning) # 4205
+outlier_rt <- round((((xdata_with_legit_final_moves - after_rt_cleaning) / xdata_with_legit_final_moves) * 100), 1) # 1.3% exclusion
+
+```
+
+To account for outliers due to attentional lapses and distractions, we further removed trials that elicited reaction times that were more than 4 SDs from the median (`r outlier_rt`%) for each participant for each quarter of the experiment (trials binned into 4 equal bins), respectively.
+
+```{r}
+#| label: cleaned_rt-distribution-trial
+#| fig-cap: "Distribution of RT across trials after data trimming"
+
+xdata_after_rt_cleaning |> 
+  group_by(trials) |> 
+  summarise(mean_rt = mean(response_time, na.rm = TRUE))  |> 
+  ggplot(aes(x = trials, y = mean_rt)) + 
+  geom_point(pch = 21,
+             size = 2,
+              color = "white",
+              fill = alpha("black", 0.5)) +
+  geom_smooth(method = "lm", 
+              se = FALSE) +
+  labs(x = "trial number",
+       y = "average reaction time in seconds") +
+  theme_minimal()
+
+```
+
+How much data did we overall lose?
+
+```{r}
+#| label: overall-exclusion
+
+exclusions <- round((((all_data - after_rt_cleaning) / all_data) * 100), 1)  # 16.6% exclusion
+
+```
+
+All in all, we excluded `r exclusions`% of data.
+
+# Wrangle, store and save for later use
+
+```{r}
+
+## Store clean dataframe
+xdata_wrangled <- xdata_after_rt_cleaning |> 
+  select(labID, participantID, 
+         # demographics
+         birthyear, sex, 
+         # origin
+         residence_country, country_of_origin,
+         # language
+         language, 
+         # music
+         instrument, instrument_training, musical_level, 
+         musical_training_year, music_hour, group_singing,
+         group_singing_year, solo_vocal, solo_vocal_year,
+         music_hour, met_score,
+         # response
+         final_rating, response_f_rel,
+         response_f_rel_st,
+         stimuli_direction, response_dir,
+         response_f, correct,
+         recovered_f0,
+         # predictors
+         delta_t, delta_f, 
+         delta_f_raw, delta_f_raw_st
+         ) 
+```
+
+```{r}
+#| label: write-data
+
+# write clean data after exclusion
+write_csv(xdata_wrangled, "../data/derived/data_after_exclusion.csv")
+
+```

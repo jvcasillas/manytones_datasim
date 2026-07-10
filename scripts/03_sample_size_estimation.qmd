@@ -1,6 +1,9 @@
 ---
 title: "01_sample_size_estimation"
-format: html
+format:
+  html:
+    embed-resources: true
+    toc: true       
 editor: visual
 ---
 
@@ -9,11 +12,10 @@ editor: visual
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux)
+pacman::p_load(brms, ggplot2, here, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, truncnorm, lme4, faux, scam, bayestestR, faux, quantreg)
 
-# Set the current working directory to the one where this file is
-current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path)
-setwd(current_working_dir)
+# global seed 
+set.seed(211)
 
 # options to increase efficiency of brms models (optional)
 options(brms.backend = "cmdstanr")
@@ -29,7 +31,7 @@ Load in data.
 #| label: data_wrangling
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/derived/data_after_exclusion.csv")
+xdata <- read_csv(here::here("data", "derived", "data_after_exclusion.csv"))
 
 ```
 
@@ -43,7 +45,7 @@ Based on the estimated values the difference between Δf0 = -20 ms and -20 ms (#
 # NOTE: currently still based on the gaussian models. needs to be updated if we go with the student error terms
 
 # load in model
-xmdl <- readRDS("../models/model_simple_df0.rds")
+xmdl <- readRDS(here::here("models", "model_simple_df0.rds"))
 
 # intercept
 intercept = fixef(xmdl)[[1]]
@@ -122,14 +124,22 @@ my_sim_data() |>
 #| label: wrapper_around_model
 
 # model formula
-formula_sim = bf(response ~ delta_f + (delta_f | subject), nu = 4)
+formula_sim = brms::bf(response ~ delta_f + (delta_f | subject), nu = 4)
 
 # my priors (default for now plus weakly regularizing for beta)
 mypriors <- c(
-              prior(cauchy(0, 3.33), class = "b", ub = 100, lb = -100),
-              prior(cauchy(0, 3.33), class = "Intercept", ub = 50, lb = -50),
-              prior(cauchy(0, 3.33), class = "sd", ub = 100),
-              prior(lkj(1), class = "cor")
+              brms::prior(cauchy(0, 0.38), 
+                    class = "b", 
+                    lb = -12,
+                    ub = 12),
+              brms::prior(cauchy(0, 0.38), 
+                    class = "Intercept", 
+                    lb = -7.01955, 
+                    ub = 4.98045),
+              brms::prior(cauchy(0, 0.38), 
+                    class = "sd", 
+                    ub = 12),
+              brms::prior(lkj(1), class = "cor")
               )
 
 # number of sims per specification (target = 500?)
@@ -192,73 +202,103 @@ subject_list_df <- as.data.frame(subject_list) |>
 loop_results$subj_n = subject_list_df$subj_n
 
 # save results
-write.csv(loop_results, "../data/BF_sample_size_calculation.csv")
+write.csv(loop_results, here::here("data", "derived", "BF_sample_size_calculation.csv"))
+
 ```
 
 ```{r plot_results}
 
-loop_results <- read_csv("../data/BF_sample_size_calculation.csv")
+loop_results <- read_csv(here::here("data", "derived", "BF_sample_size_calculation.csv")) |> 
+  mutate(BF = ifelse(is.infinite(BF), 8000, BF))
   
-# plot results
-loop_agg <- loop_results |> 
-  group_by(subj_n) |> 
-  summarise(BF_l05 = quantile(BF, prob = 0.05),
-            BF = median(BF)) 
+# linear model of results
+lm_bf <- lm(log(BF) ~ subj_n, loop_results)
+
+# predict
+new_data <- data.frame(subj_n = seq(5, 100, by = 1))
+
+# get the fitted values AND the standard errors from the model
+pred_raw <- predict(lm_bf, newdata = new_data, se.fit = TRUE)
+
+#----
   
+
+
+# fit models for the 5th percentiles on the original scale
+# (Or on log(BF) if you prefer, but rq can handle the raw data directly!)
+model_q05 <- rq(BF ~ subj_n, data = loop_results, tau = 0.05)
+model_med <- rq(BF ~ subj_n, data = loop_results, tau = 0.50) # Empirical Median
+
+# generate predictions across your 25, 75 subject range
+new_data <- data.frame(subj_n = seq(25, 75, by = 1))
+
+empirical_bounds <- data.frame(
+  subj_n    = new_data$subj_n,
+  BF        = predict(model_med, newdata = new_data),
+  BF_l05    = predict(model_q05, newdata = new_data)
+)
+
+# ~50 participants
 
 # colors for sequential
-
 myPalette <- colorRampPalette(colors = c("#f1eef6","#d4b9da",
                                          "#c994c7","#df65b0",
                                          "#dd1c77","#980043"))
 
 BF_sample_plot <- 
-ggplot(data = loop_agg,
-       aes(x = subj_n, y = BF,
-           fill = BF)) +
+ggplot(data = empirical_bounds,
+       aes(x = subj_n, y = BF)) +
   geom_point(data = loop_results,
              alpha = 0.1,
+             fill = "#dd1c77",
              color = "white",
              pch = 21) +
-  #geom_path() +
-  geom_segment(aes(x = subj_n-1,
-                   xend = subj_n+1,
-                   y = BF_l05,
-                   yend = BF_l05),
-              size = 1,
-              color = "black") +
-  geom_point(pch = 21,
-             size = 5) +
+  geom_line(size = 2,
+            color = "black") +
+  geom_line(size = 1,
+            color = "#dd1c77") +
+  geom_line(aes(y = BF_l05),
+            size = .7,
+            color = "black") +
   geom_hline(yintercept = 10,
              lty = "dashed") +
-  scale_fill_gradientn(colours = myPalette(100),
-                       trans = "log10",
-                       breaks = c(0.1,1,10,100,1000,10000),
-                       labels = c(0.1,1,10,100,1000,10000)) +
-  # scale_fill_viridis(option= "plasma", 
-  #                    trans = "log10",
-  #                    limits = c(0.01,10000),
-  #                    breaks = c(0.01,0.1,1,10,100,1000,10000),
-  #                    labels = c(0.01,0.1,1,10,100,1000,10000)) +
   scale_y_continuous(trans = "log10",
-                     limits = c(0.1,10000),
-                     breaks = c(0.1,1,10,100,1000,10000),
-                     labels = c(0.1,1,10,100,1000,10000)
-                     ) +
-  scale_x_continuous(limits = c(20,80),
-                     breaks = seq(25,75,5)
-                     ) +
+                     breaks = c(0.1, 1, 10, 100, 1000, 8000),
+                     labels = c(0.1, 1, 10, 100, 1000, 8000)) +
+  scale_x_continuous(limits = c(20, 90),
+                     breaks = seq(25, 75, 5)) +
   labs(x = "\nnumber of subjects",
-       y = "Bayes Factor for beta > 0 over beta < 0\n",
-       fill = "Bayes Factor for beta > 0\n") +
-  theme_minimal()
+       y = "Bayes Factor for beta > 0 over beta < 0\n") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    # Crucial step: add right margin space so the labels fit inside the saved file
+    plot.margin = margin(t = 5.5, r = 40, b = 5.5, l = 5.5, unit = "pt") 
+  ) +
+  # Prevents R from clipping/hiding text placed outside the x-axis limits
+  coord_cartesian(clip = "off") +
+  
+  # --- DIRECT LABELS ---
+  # Label for the main BF line (placed at the far right end of the line)
+  geom_text(data = tail(empirical_bounds, 1), 
+            aes(x = subj_n + 1.5, y = BF, label = "est. BF"), 
+            hjust = 0, 
+            color = "#dd1c77", 
+            fontface = "bold") +
+           
+  # Label for the BF_l05 line (using the last row of your data)
+  geom_text(data = tail(empirical_bounds, 1), 
+            aes(x = subj_n + 1.5, y = BF_l05, label = "lower 5% perc."), 
+            hjust = 0, 
+            color = "black", 
+            fontface = "bold")
 
 BF_sample_plot
 
 # save
-ggsave(filename = "../plots/BF_sample_sim.png", 
+ggsave(filename = here::here("plots","BF_sample_sim.png"), 
        plot = BF_sample_plot,
-       width = 200, 
+       width = 150, 
        height = 100,
        units = "mm", 
        bg = "transparent",

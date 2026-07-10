@@ -22,9 +22,12 @@ knitr::opts_chunk$set(echo = FALSE,
 # install dev version of SAEforest
 # devtools::install_github("krennpa/SAEforest")
 
+# install.packages("devtools")
+#devtools::install_github("ddebeer/permimp", force = TRUE)
+
 # read in libraries
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, ranger, SAEforest)
+pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, ranger, party, SAEforest, perimp, pkgbuild)
 
 # function to ignoring the setting of the relative path below when knitting
 run_if_not_knitting <- function(expr) {
@@ -40,140 +43,189 @@ run_if_not_knitting(setwd(current_working_dir))
 ```
 
 ```{r}
-#| label: data
+#| label: prepare-data
 
 # load in data 2026/06/01
-xdata <- read_csv("../data/derived/data_after_exclusion.csv") 
+data <- read_csv("../data/derived/data_after_exclusion.csv") 
+data$delta_f_raw_st_o <- round(data$delta_f_raw_st, 3) 
 
-# generate average recovered_f0
-xdata_agg <- xdata |> 
-  filter(delta_f != 0) |> 
-  group_by(participantID) |> 
-  summarise(recovered_f0_mean = mean(recovered_f0, na.rm = FALSE))
+predictions <- read_csv("../data/derived/participant_estimated_forRF.csv")
 
 # left_join with other infos
-xdata <- xdata |> 
-  select(1:17) |> 
-  #filter(delta_f != 0) |> 
-  left_join(xdata_agg, by = "participantID") |> 
-  distinct()
+xdata <- 
+  data |> 
+  filter(delta_f_raw_st != 0) |> 
+  distinct(participantID, .keep_all = TRUE) |> 
+  left_join(predictions, by = c("participantID")) 
+
 
 ```
 
 ```{r}
-#| label: prepare-for-merf
+#| label: prepare-for-rf
 
-# define DV and IVs
-xdata$participantID <- as.factor(xdata$participantID)
-y.cols <- xdata$recovered_f0_mean
-## need to define the relevant predictors 
-x.cols <- xdata[,c(3:6,8:15)]
+# predictors
+demographic_vars <- c("birthyear", "sex", "instrument", "instrument_training", "musical_level",
+                      "musical_training_year", "music_hour", "group_singing", "group_singing_year", 
+                      "solo_vocal", "solo_vocal_year")
+
+# model formula
+model_formula <- as.formula(
+  paste("P_prop ~", paste(demographic_vars, collapse = " + "))
+)
+
+model_data <- xdata[, c("P_prop", demographic_vars)]   # keep only relevant columns
+model_data <- model_data |> 
+  # cforest doesn't handle NAs internally
+  mutate(instrument_training = ifelse(is.na(instrument_training), FALSE, instrument_training),
+         musical_level = ifelse(is.na(musical_level), "no information", musical_level),
+         musical_training_year = ifelse(is.na(musical_training_year), 0, musical_training_year),
+         group_singing_year = ifelse(is.na(group_singing_year), 0, group_singing_year),
+         solo_vocal_year = ifelse(is.na(solo_vocal_year), 0, solo_vocal_year)
+         )
+
+
+model_data <- model_data  |> 
+  mutate(across(where(is.character), as.factor))  |> 
+  mutate(across(where(is.logical), as.factor)) # cforest cannot handle character or logical vector
 
 ```
 
-## Tuning the MERF
+## Tuning the RF
 
 First, map out the parameter combinations you want to test.
 
 ```{r}
 #| label: define-grid-for-tuning
 
-# Define hyperparameters to test
 tuning_grid <- expand.grid(
-  mtry = seq(2, 10, 2),                     # Adjust based on your total number of features: Currently 12+ 
-  min_node_size = c(1, 3, 5, 10, 20, 50, 100),       # Lower = deeper trees (more complex)
-  num_trees = 500,                       # Fixed at 500 for speed
-  stringsAsFactors = FALSE
+  mtry      = 1:length(demographic_vars),
+  minbucket = c(5, 10, 20),
+  maxdepth  = c(0, 5, 10)   # 0 = unlimited depth in party::cforest_control
 )
-
-# Create a placeholder column to store performance results
-tuning_grid$OOB_MSE <- NA_real_
 
 ```
 
-Loop through your grid, fit a MERFranger model for each combination, and extract the Out-of-Bag Mean Squared Error ($OOB\_MSE$) from the forest component to evaluate performance.
+Loop through your grid, fit a ranger model for each combination, and extract the Out-of-Bag Mean Squared Error ($OOB\_MSE$) from the forest component to evaluate performance.
 
 ```{r}
 #| label: run-grid-search
 
-# Loop through each row of the grid
-for (i in 1:nrow(tuning_grid)) {
+ntree_tuning <- 500
+
+tune_results <- vector("list", nrow(tuning_grid))
+
+set.seed(123)
+
+for (i in seq_len(nrow(tuning_grid))) {
   
-  cat(sprintf("Tuning iteration %d/%d: mtry = %d, min.node.size = %d\n", 
-              i, nrow(tuning_grid), tuning_grid$mtry[i], tuning_grid$min_node_size[i]))
+  params <- tuning_grid[i, ]
   
-  # Fit the model with current parameters
-  temp_merf <- MERFranger(
-    Y = y.cols,
-    X = x.cols,
-    random = "(1|participantID)",
-    data = xdata,
-    num.trees = tuning_grid$num_trees[i],
-    mtry = tuning_grid$mtry[i],
-    min.node.size = tuning_grid$min_node_size[i],
-    verbose = FALSE # Turn off inner logs to keep console clean
+  cf_tune <- cforest(
+    model_formula,
+    data = model_data,
+    controls = cforest_unbiased(
+      ntree     = ntree_tuning,
+      mtry      = params$mtry,
+      minbucket = params$minbucket,
+      maxdepth  = params$maxdepth
+    )
   )
   
-  # Extract the prediction error (MSE) from the ranger object
-  tuning_grid$OOB_MSE[i] <- temp_merf$Forest$prediction.error
+  oob_preds_tune <- predict(cf_tune, OOB = TRUE)
+  mse_tune <- mean((model_data$P_prop - oob_preds_tune)^2)
+  
+  tune_results[[i]] <- data.frame(
+    mtry      = params$mtry,
+    minbucket = params$minbucket,
+    maxdepth  = params$maxdepth,
+    oob_mse   = mse_tune
+  )
+  
+  cat("Combination", i, "of", nrow(tuning_grid),
+      "| mtry =", params$mtry,
+      "| minbucket =", params$minbucket,
+      "| maxdepth =", params$maxdepth,
+      "| OOB MSE =", round(mse_tune, 5), "\n")
 }
 
+tuning_df <- bind_rows(tune_results) |> 
+  arrange(oob_mse)
+print(head(tuning_df, 10))
+
+# Select best combination
+best_params <- tuning_df[1, ]
+cat("\nBest hyperparameters selected:\n")
+print(best_params)
+
+
 ```
+
+## Optimal Model
 
 Once the loop finishes, look at your grid to find the row with the lowest error score and use those exact parameters to train your final model.
 
 ```{r}
 #| label: identify-optimal-model
 
-# Find the best parameters
-best_params <- tuning_grid |> 
-  arrange(OOB_MSE) |> 
-  slice(1)
+set.seed(123)
 
-print(best_params)
-# mtry = 2
-# min_node_size = 10
-
-# Train your final production model using the best parameters found
-final_merf_model <- MERFranger(
-  Y = y.cols,
-  X = x.cols,
-  random = "(1|participantID)",
-  data = xdata,
-  num.trees = best_params$num_trees,
-  mtry = best_params$mtry,
-  min.node.size = best_params$min_node_size,
-  importance = "permutation" # Turn on importance for your final model
+cf_model <- cforest(
+  model_formula,
+  data = model_data,
+  controls = cforest_unbiased(
+    ntree     = 1000,   # bump up ntree for the final model for stability
+    mtry      = best_params$mtry,
+    minbucket = best_params$minbucket,
+    maxdepth  = best_params$maxdepth
+  )
 )
+
+oob_preds <- predict(cf_model, OOB = TRUE)
+
+mse_oob <- mean((model_data$P_prop - oob_preds)^2)
+r2_oob  <- 1 - (sum((model_data$P_prop - oob_preds)^2) /
+                 sum((model_data$P_prop - mean(model_data$P_prop))^2))
+
+cat("Final model - Out-of-Bag MSE:", round(mse_oob, 4), "\n")
+cat("Final model - Out-of-Bag R2:", round(r2_oob, 4), "\n")
 
 ```
 
-Now extract variable importance:
+## Predictor importance
 
 ```{r}
-#| label: var-importance
-#| fig-cap: "Variable Importance (Fixed Effects Component)"
+set.seed(123)
 
-var_imp <- importance(final_merf_model$Forest)
+cond_importance <- permimp(
+  cf_model,
+  conditional = TRUE,
+  threshold = 0.2,
+  asParty = TRUE,      # use the original party-style algorithm instead
+  progressBar = TRUE
+)
 
-print(var_imp)
+importance_df <- data.frame(
+  predictor  = names(cond_importance$values),
+  importance = as.numeric(cond_importance$values)
+) %>%
+  arrange(desc(importance))
 
-imp_df <- tibble(
-  Variable = names(var_imp),
-  Importance = var_imp
-) |> 
-  arrange(desc(Importance))
+print(importance_df)
 
 # Plot
-ggplot(imp_df, 
-       aes(x = reorder(Variable, Importance), y = Importance,
-       xend = reorder(Variable, Importance))) +
+ggplot(importance_df, 
+       aes(x = reorder(predictor, importance), y = importance,
+       xend = reorder(predictor, importance))) +
+  geom_hline(yintercept = 0, 
+            lty = "dashed") +
   geom_segment(
-    aes(xend = reorder(Variable, Importance), y = 0, yend = Importance),
+    aes(xend = reorder(predictor, importance), y = 0, yend = importance),
     color = "grey70",
     linewidth = 0.8
   ) +
   geom_point(color = "#dd1c77", size = 2) +
+
   coord_flip() +  # Flips to horizontal for readable variable names
   labs(
     title = "Variable Importance (Fixed Effects Component)",
@@ -184,3 +236,78 @@ ggplot(imp_df,
   theme_minimal()
 
 ```
+
+## Partial Dependence
+
+```{r}
+
+top_n <- 5
+top_predictors <- importance_df$predictor[1:top_n]
+
+pred_fun <- function(object, newdata) {
+  predict(object, newdata = newdata, OOB = FALSE)
+}
+
+pdp_list <- lapply(top_predictors, function(var) {
+  pd <- pdp::partial(
+    cf_model,
+    pred.var  = var,
+    pred.fun  = pred_fun,
+    train     = model_data,
+    grid.resolution = 10,
+    ice = FALSE
+  )
+  names(pd)[1] <- "x_value"
+  pd$predictor_name <- var
+  pd
+})
+
+combined_tbl <- map_dfr(pdp_list, function(pd) {
+  pd |> 
+    as_tibble() |> 
+    mutate(x_value = as.character(x_value))})  |> 
+  group_by(predictor_name, x_value)  |> 
+  summarise(yhat = mean(yhat, na.rm = TRUE), .groups = "drop")  |> 
+  mutate(x_numeric = suppressWarnings(round(as.numeric(x_value), 2)))
+
+# separate factors from numeric to better plot
+combined_tbl_numeric  <- 
+  combined_tbl |> 
+  filter(predictor_name %in% c("group_singing_year", 
+                              "music_hour", 
+                              "musical_training_year"))
+combined_tbl_factors <- 
+  combined_tbl |> 
+  filter(predictor_name %in% c("instrument", 
+                              "instrument_training"))
+
+# plot
+combined_tbl_numeric |> 
+  ggplot(aes(x =  x_numeric, 
+             y = yhat*100)) + 
+  geom_point() + 
+  geom_line() +
+  facet_wrap(~predictor_name,
+             scales = "free_x") +
+  labs(x = "",
+      y = "recovered pitch proportion") +
+  theme_minimal()
+
+combined_tbl_factors |> 
+  ggplot(aes(x =  x_value, 
+             y = yhat*100,
+             group = 1)) + 
+  geom_point() + 
+  geom_line() +
+  facet_wrap(~predictor_name,
+             scales = "free_x") +
+    labs(x = "",
+      y = "recovered pitch proportion") +
+  theme_minimal()
+
+
+
+
+```
+
+
