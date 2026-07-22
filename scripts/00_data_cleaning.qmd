@@ -557,24 +557,44 @@ xdata_after_final_moves |>
 ```{r}
 #| label: exclude-outliers
 
-# remove RT outliers separately for each participant AND separately within
-# each quarter of the experiment (since RTs trend downward across trials,
-# as shown above - a single global cutoff per participant would unfairly
-# penalize early, naturally-slower trials)
-xdata_after_rt_cleaning <- xdata_after_final_moves |>
-  mutate(trial_bracket = cut(trials,
-                             breaks = 4,
-                             labels = seq(1,4,1))
-  ) |>
-  group_by(participantID, trial_bracket) |>
-  # trim responses more than 4 SDs from the (within participant x quarter) median
-  filter(response_time < (median(response_time) + 4 * mad(response_time)) &
-         response_time > (median(response_time) - 4 * mad(response_time))) |>
+# Log rt
+xdata_before_rt_cleaning <- xdata_after_final_moves |> 
+  mutate(log_rt = log(response_time))
+
+# Fit a linear mixed-effects model
+m <- lmer(log_rt ~ 1 + trials + (1 + trials | participantID), data = xdata_before_rt_cleaning)
+
+# Add model-implied fitted values and raw residuals
+xdata_before_rt_cleaning <- xdata_before_rt_cleaning |> 
+  mutate(fitted_log_rt = fitted(m),
+         resid_log_rt  = log_rt - fitted_log_rt)
+
+# Scale residuals per participant (z-score within each participant)
+xdata_before_rt_cleaning <- xdata_before_rt_cleaning |> 
+  group_by(participantID) |> 
+  mutate(scaled_resid = as.numeric(scale(resid_log_rt))) |>
   ungroup()
 
+# Flag and exclude outliers: |scaled residual| > 4
+xdata_before_rt_cleaning <- xdata_before_rt_cleaning |> 
+  mutate(outlier = abs(scaled_resid) > 4)
+
+xdata_after_rt_cleaning <- xdata_before_rt_cleaning |>
+  filter(!outlier)
+
+# Quick summary of how many trials were excluded, overall and per participant
+cat("Total excluded:", sum(xdata_before_rt_cleaning$outlier), "out of", nrow(xdata_before_rt_cleaning), "\n")
+
+xdata_before_rt_cleaning %>%
+  group_by(participantID) %>%
+  summarise(n_total = n(),
+            n_excluded = sum(outlier),
+            pct_excluded = 100 * n_excluded / n_total) %>%
+  print(n = Inf)
+
 # data loss?
-after_rt_cleaning <- nrow(xdata_after_rt_cleaning) # 3972
-outlier_rt <- round((((xdata_with_legit_final_moves - after_rt_cleaning) / xdata_with_legit_final_moves) * 100), 1) # 6.9% exclusion
+after_rt_cleaning <- nrow(xdata_after_rt_cleaning) # 4256
+outlier_rt <- round((((xdata_with_legit_final_moves - after_rt_cleaning) / xdata_with_legit_final_moves) * 100), 1) # 0.3% exclusion
 ```
 
 To account for outliers due to attentional lapses and distractions, we further removed trials that elicited reaction times that were more than 4 median absolute deviation from the median (`r outlier_rt`%) for each participant for each quarter of the experiment (trials binned into 4 equal bins), respectively.
@@ -603,7 +623,7 @@ How much data did we overall lose?
 ```{r}
 #| label: overall-exclusion
 
-exclusions <- round((((all_data - after_rt_cleaning) / all_data) * 100), 1)  # 21.2% exclusion
+exclusions <- round((((all_data - after_rt_cleaning) / all_data) * 100), 1)  # 15.6% exclusion
 ```
 
 All in all, we excluded `r exclusions`% of data across all exclusion steps combined (attention checks, control-trial performance, oversized final slider moves, and reaction-time trimming).
@@ -730,7 +750,13 @@ language_wide <- language_long |>
   )
 
 # ============================================================
-# Step 5: join back onto the main dataset as needed
+# Step 5: rename levels
+# ============================================================
+
+
+
+# ============================================================
+# Step 6: join back onto the main dataset as needed
 # ============================================================
 
 # Wide format (one row per participant) - good if you just want, e.g.,

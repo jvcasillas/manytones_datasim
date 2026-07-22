@@ -30,7 +30,8 @@ block and once named as CV block.
 DATASET SHAPE
 -------------
 - Rows: 5040   (one row = one trial)
-- Columns: 61
+- Columns: 79  (language decoding columns were added by the updated
+  process_csv_v3.py - re-run it to populate them)
 - Participants: 40  (each did exactly 126 trials = 63 TONE + 63 CV)
 - Recruitment groups (labID): 32 online (Prolific) + 8 in-lab
 
@@ -105,11 +106,51 @@ residence_country      participant  text  Country of residence. FREE TEXT - need
 country_of_origin      participant  text  Country of origin. Free text, same
                                           cleaning caveat as above.
 language               participant  JSON  Self-reported languages & proficiency,
-                                          stored as a JSON array (one object per
-                                          language). "Column 1" = language name;
-                                          "Column 2"-"Column 8" = the survey's
-                                          self-rating fields (e.g. proficiency,
-                                          age of acquisition). Must be parsed.
+                            stored as a readable JSON array (one object per
+                            language) with renamed keys: lang_name,
+                            fluency, aoa_onset, listening, speaking,
+                            reading, writing.
+                            Original Pavlovia mapping was: Column 1 = language
+                            name, Column 2 = overall fluency, Column 3 = age of
+                            acquisition onset, Column 8 = listening,
+                            Column 5 = speaking, Column 6 = reading,
+                            Column 7 = writing.
+language_n             participant  int   Number of non-empty language rows in
+                            the matrix.
+language_1             participant  text  First listed language name.
+language_2             participant  text  Second listed language name, if any.
+language_all           participant  text  Semicolon-separated list of all listed
+                            language names.
+language_1_fluency     participant  text  Decoded fluency label for the first
+                            listed language.
+language_fluency_mean  participant  num   Mean fluency across listed languages.
+language_1_aoa_onset   participant  num   Age-of-acquisition onset for the
+                            first listed language.
+language_aoa_onset_mean participant  num   Mean age-of-acquisition onset across
+                            listed languages.
+language_1_listening   participant  text  Decoded listening label for the first
+                            listed language.
+language_listening_mean participant  num   Mean listening score across listed
+                            languages.
+language_1_speaking    participant  text  Decoded speaking label for the first
+                            listed language.
+language_speaking_mean participant  num   Mean speaking score across listed
+                            languages.
+language_1_reading     participant  text  Decoded reading label for the first
+                            listed language.
+language_reading_mean   participant  num   Mean reading score across listed
+                            languages.
+language_1_writing     participant  text  Decoded writing label for the first
+                            listed language.
+language_writing_mean  participant  num   Mean writing score across listed
+                            languages.
+                            Decoded label meanings in the readable JSON and
+                            first-language columns come from the survey scales:
+                            Fluency = Native / Fluent / Intermediate /
+                            Beginner.
+                            Listening, Speaking, Reading = Native / Fluent /
+                            Intermediate / Beginner / No knowledge.
+                            Writing can additionally be Not applicable.
 instrument             participant  bool  Plays a musical instrument? TRUE/FALSE.
 instrument_training    participant  bool  Has had instrument training? TRUE/FALSE.
                                           Blank when not applicable.
@@ -192,9 +233,34 @@ tone_slider.response trial  num   Slider value on TONE-block rows (blank on CV
                                     rows). Equals final_rating there.
 cv_slider.response   trial  num   Slider value on CV-block rows (blank on TONE
                                     rows). Equals final_rating there.
-response_time        trial  num   Trial response time in SECONDS (range ~1-200,
-                                    mean ~7.6). Long tail - consider trimming
-                                    outliers.
+slider_rt            trial  num   NEW. Time (s) of the participant's FINAL slider
+                                    movement, measured from trial onset (t=0).
+                                    Combined from the native tone_slider.rt /
+                                    cv_slider.rt (one per block).
+mouse_time           trial  num   NEW. Time (s) of the report-button submit click,
+                                    parsed from the one-element tone_mouse.time /
+                                    cv_mouse.time list. Its clock starts at the
+                                    FIRST slider move (when the button appears), so
+                                    it measures first-move -> submit, NOT from
+                                    trial onset. Median ~3.0 s.
+response_time        trial  num   Trial duration in SECONDS, from onset to the
+                                    commit click (= tone/cv_trial.stopped - started,
+                                    verified). The routine ENDS at the click; the
+                                    feedback tones play interactively DURING slider
+                                    adjustment, not after - so this is a clean
+                                    onset->submit time, not padded by feedback. Its
+                                    zero (the 'started' stamp) sits ~0.16 s before
+                                    audible onset (0.25 s play delay - 0.09 s sound
+                                    construction); online audio-onset latency adds a
+                                    small unmeasurable per-trial jitter. Range
+                                    ~1-200 s.
+                                    NOTE: response_time = slider_rt + mouse_time
+                                    ONLY on single-move trials (final_moves==1, ~30%
+                                    of trials). On multi-move trials that sum
+                                    OVERSHOOTS by ~2.2 s (median), because mouse_time
+                                    is anchored to the first move while slider_rt is
+                                    the last move. For "t=0 to submit" use
+                                    response_time directly.
 
 --------------------------------------------------------------------------------
 G. ATTENTION / CATCH CHECKS  (all participant-level summaries)
@@ -245,12 +311,15 @@ DATA-CLEANING CHECKLIST (please read before analysis)
 ================================================================================
 - One row = one trial. De-duplicate to participantID before using any
   participant-level column (Group B, all catch_* columns, catch_n_found,
-  met_score, goodbye.stopped); otherwise each value is counted 126 times.
+  met_score, goodbye.stopped, and the language_* participant summaries);
+  otherwise each value is counted 126 times.
 - Identify the block with tone_trials.thisN (TONE) vs cv_trials.thisN (CV).
 - final_rating == 11 can be an imputed default for a missing response. One tone
   trial has no slider response at all. Decide how to handle before averaging.
 - residence_country and country_of_origin are free text and need normalising.
-- language is JSON - parse it; don't treat it as a plain string.
+- language is readable JSON with renamed keys and text labels.
+- language_n counts non-empty language rows; language_1 is just the first
+  listed language, not necessarily the native language.
 - birthyear has at least one implausible value (1925) - validate.
 - response_time and goodbye.stopped are both in SECONDS.
 - trial_tone_list and trial_i_list are entirely empty in this file.
