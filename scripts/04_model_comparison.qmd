@@ -8,14 +8,12 @@ format:
 editor: visual
 ---
 
-
 ```{r setup}
 #| label: setup
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, here, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, marginaleffects,
-               bridgesampling, collapse, bayestestR)
+pacman::p_load(brms, ggplot2, here, patchwork, plotly, tidybayes, modelr, viridis, tidyverse, dplyr, marginaleffects, bridgesampling, collapse, bayestestR)
 
 # options to increase efficiency of brms models (optional)
 options(brms.backend = "cmdstanr")
@@ -39,10 +37,12 @@ hombert <- read_csv(here::here("data", "derived", "hombert.csv"))
 We will attempt to identify properties of the underlying psychometric function that describes the relationship between perceived f0 responses, Δf0, and Δt. To that end, we systematically compare different models alongside their assumptions about this relationship. Hombert (1975) suggests a non-linear increase of perceived pitch as a function of Δt that approaches an asymptote towards higher Δt values, i.e. the benefit of a longer tonal slope decreases. We thus use as a starting point a linear mixed effects model that constraints the predictors to monotonicity (mo). This assumption is an efficient & computationally feasible way to relax the assumption of linearity, without having to use more complex models (GAMMs) with shape-constrained or unconstrained non-linear smooths.
 
 ## Priors
-In the following we will justify prior widths for linear and monotonic effects of delta-f0 and delta-t. 
+
+In the following we will justify prior widths for linear and monotonic effects of delta-f0 and delta-t.
 
 ### Linear priors
-The maximum change in f0 per unit of pitch slope should be 1/3 of the f0 perturbation (see Rossi 1971, 1978). For delta-f = 1 Hz, this corresponds to 0.33 Hz and ~0.04 STs (with reference value of 150 Hz) which we chose as the width of for a weakly informative priors for both beta and the by-participants slopes of delta-f. If delta-f is transformed to STs, a change in 1 ST is 0.33 STs, respectively.
+
+The maximum change in f0 per unit of pitch slope should be 1/3 of the f0 perturbation (see Rossi 1971, 1978). For delta-f = 1 Hz, this corresponds to 0.33 Hz and \~0.04 STs (with reference value of 150 Hz) which we chose as the width of for a weakly informative priors for both beta and the by-participants slopes of delta-f. If delta-f is transformed to STs, a change in 1 ST is 0.33 STs, respectively.
 
 ```{r}
 #| label: linear-prior-delta-f
@@ -83,7 +83,7 @@ prior_linear_delta_t <- lm_hombert[1][[1]][[2]]
 
 mo() coefficients describe the total change from min level to max level for an ordered factor divided by the number of levels -1. That is, the coefficient for mo() should show the average effect for one change in ordered level of delta f0. But when an additional predictor is present, it also takes as the reference level the lowest level of the respective other predictors. We have to keep that in mind when defining priors.
 
-For delta_f, one step corresponds to on average of 10 Hz. Making the assumption that the effect is constant at all delta-ts, we thus multiply the linear prior for Hz with this number, arriving at ~0.39 STs. Due to both the observation in Hombert and our own pilots, at the reference level of 20 ms slope duration, this effect is likely diminished. To keep our priors reasonably tight, we half this value, arriving at ~0.19 STs. If delta-f is transformed to STs, the largest change in STs form step to step is from -40 Hz (-5.37) to -30 Hz (3.86) ~ 1.5 STs. On third would be 0.5 STs and halving that ends up at 0.25 STs.
+For delta_f, one step corresponds to on average of 10 Hz. Making the assumption that the effect is constant at all delta-ts, we thus multiply the linear prior for Hz with this number, arriving at \~0.39 STs. Due to both the observation in Hombert and our own pilots, at the reference level of 20 ms slope duration, this effect is likely diminished. To keep our priors reasonably tight, we half this value, arriving at \~0.19 STs. If delta-f is transformed to STs, the largest change in STs form step to step is from -40 Hz (-5.37) to -30 Hz (3.86) \~ 1.5 STs. On third would be 0.5 STs and halving that ends up at 0.25 STs.
 
 ```{r}
 #| label: mo-prior-delta-f
@@ -98,7 +98,7 @@ prior_mo_delta_f_st = 0.25
 
 ```
 
-For delta-t, one step corresponds to 20 ms. Making the assumption that the effect is constant at all delta-fs, we thus multiply the linear prior for 1 ms with 20, arriving at ~0.34 STs. 
+For delta-t, one step corresponds to 20 ms. Making the assumption that the effect is constant at all delta-fs, we thus multiply the linear prior for 1 ms with 20, arriving at \~0.34 STs.
 
 ```{r}
 #| label: mo-prior-delta-t
@@ -176,7 +176,7 @@ mypriors <- c(
 mono_model <- brm(
   formula_mono,
   data = xdata,
-  file = "../models/Q1_mono_model",
+  file = here::here("models", "Q1_mono_model"),
   family = student,
   seed = 123,
   iter = 4000,
@@ -382,7 +382,7 @@ mypriors_linear_int <- c(mypriors_linear,
 linear_model_delta_t <- brm(
   formula_linear_dt,
   data = xdata,
-  file = "../models/Q1_linear_model_linear_delta_t",
+  file = here::here("models", "Q1_linear_model_linear_delta_t"),
   family = student,
   seed = 123,
   iter = 4000,
@@ -396,7 +396,7 @@ linear_model_delta_t <- brm(
 linear_model_delta_f <- brm(
   formula_linear_df0,
   data = xdata,
-  file = "../models/Q1_linear_model_linear_delta_f",
+  file = here::here("models", "Q1_linear_model_linear_delta_f"),
   family = student,
   seed = 123,
   iter = 4000,
@@ -410,7 +410,7 @@ linear_model_delta_f <- brm(
 linear_model_inter <- brm(
   formula_linear_int,
   data = xdata,
-  file = "../models/Q1_linear_model_linear_inter",
+  file = here::here("models", "Q1_linear_model_linear_inter"),
   family = student,
   seed = 123,
   iter = 4000,
@@ -443,8 +443,9 @@ loo_comp_1 <- loo_compare(list(linear1 = loo(linear_model_delta_f),
 
 ```
 
-# Plot models 
-## delta-t * delta-f0
+# Plot models
+
+## delta-t \* delta-f0
 
 Here is the descriptive plot:
 
@@ -591,7 +592,6 @@ Extract estimates from best fitting model
 ```{r}
 #| label: model-pred-2
 
-
 # translate predictions in proportions
 prediction <-  linear_model_delta_t |>
   epred_draws(newdata = newdata,
@@ -698,7 +698,6 @@ predictions_agg |>
 ```{r}
 #| label: store_part_estimates
 
-write_csv(predictions_agg, "../data/derived/participant_estimated_forRF.csv")
+write_csv(predictions_agg, here::here("data","derived", "participant_estimated_forRF.csv"))
 
 ```
-

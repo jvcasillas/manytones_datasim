@@ -27,29 +27,24 @@ knitr::opts_chunk$set(echo = FALSE,
 
 # read in libraries
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(viridis, tidyverse, rstudioapi, knitr, kableExtra, broom, patchwork, plotly, ranger, party, SAEforest, perimp, pkgbuild)
-
-# function to ignoring the setting of the relative path below when knitting
-run_if_not_knitting <- function(expr) {
-  if (!isTRUE(getOption("knitr.in.progress"))) {
-    eval(expr)
-  }
-}
-
-# set the current working directory to the one where this file lives
-run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
-run_if_not_knitting(setwd(current_working_dir))
+pacman::p_load(viridis, tidyverse, here, knitr, kableExtra, broom, patchwork, plotly, ranger, party, SAEforest, permimp, pkgbuild)
 
 ```
+
+# Data Preparation
+## Read Data
 
 ```{r}
 #| label: prepare-data
 
-# load in data 2026/06/01
-data <- read_csv("../data/derived/data_after_exclusion.csv") 
-data$delta_f_raw_st_o <- round(data$delta_f_raw_st, 3) 
+# latest pilot from 2026/06/01
+data <- read.csv(here("data", "derived", "data_after_exclusion.csv"))
+predictions <- read_csv(here("data", "derived", "participant_estimated_forRF.csv"))
+tone <- read.csv(here("data", "derived", "language_tone.csv"), header = TRUE) |> 
+  rename(language_name = name) |> 
+  mutate(language_name = tolower(language_name))
+ting <- read_csv(here("data", "derived", "language_cf0_effects.csv"))
 
-predictions <- read_csv("../data/derived/participant_estimated_forRF.csv")
 
 # left_join with other infos
 xdata <- 
@@ -58,16 +53,193 @@ xdata <-
   distinct(participantID, .keep_all = TRUE) |> 
   left_join(predictions, by = c("participantID")) 
 
+```
+
+## Wrangle language information
+
+```{r}
+#| label: prep-wrangle-demo
+
+# We have to do some wrangling
+# --- 0. Fix language strings
+unique(xdata$language_name_1)
+unique(xdata$language_name_2)
+unique(xdata$language_name_3)
+
+# Remove special characters and make everything lower case
+# Identify columns starting with 'language_name_'
+lang_cols <- grep("^language_name_", colnames(xdata), value = TRUE)
+
+# Loop through each column to convert to lower and remove special characters
+for (col in lang_cols) {
+  # Convert to lowercase
+  xdata[[col]] <- tolower(xdata[[col]])
+  
+  # Trim spaces from start and end only
+  xdata[[col]] <- trimws(xdata[[col]])
+  
+  # Remove special characters (keeps letters, numbers, and spaces)
+  xdata[[col]] <- gsub("[^[:alnum:] ]", "", xdata[[col]])
+  
+  # Clean up double spaces left behind by removed symbols
+  xdata[[col]] <- gsub("\\s+", " ", xdata[[col]])
+}
+
+unique(xdata$language_name_1)
+unique(xdata$language_name_2)
+unique(xdata$language_name_3)
+
+# bin same languages
+xdata <- xdata|> 
+  mutate(across(starts_with("language_name_"), 
+                ~ str_replace(., "american english", "english")))
 
 ```
+
+```{r}
+#| label: wrangle-demo
+
+# Now creating categories
+# Add a row id if you don't already have a unique participant identifier
+xdata <- xdata |> mutate(.row_id = row_number())
+
+# --- 1. Reshape to long format: one row per participant per language slot ----
+long_data <- xdata |>
+  select(.row_id, matches("^(language_name|overall_fluency|age_of_acquisition_onset)_\\d+$")) |>
+  pivot_longer(
+    cols = -.row_id,
+    names_to = c(".value", "slot"),
+    names_pattern = "^(language_name|overall_fluency|age_of_acquisition_onset)_(\\d+)$"
+  ) |>
+  mutate(slot = as.integer(slot)) |>
+  filter(!is.na(language_name) & language_name != "") |>  # drop empty/unfilled slots
+  mutate(age_of_acquisition_onset = ifelse(slot == 1 & is.na(age_of_acquisition_onset), 0, age_of_acquisition_onset))  # missing AoA -> 0
+
+# --- 2. Identify L1 per participant ------------------------------------------
+# Candidate L1s: age_of_acquisition_onset <= 5
+# Among candidates, pick lowest overall_fluency (most native);
+# tie-break by lowest slot number (i.e. named first)
+l1_data <- long_data |>
+  filter(age_of_acquisition_onset <= 5) |>
+  group_by(.row_id) |>
+  arrange(overall_fluency, slot, .by_group = TRUE) |>
+  slice(1) |>
+  ungroup() |>
+  select(.row_id, L1 = language_name)
+
+# Fail-safe: for participants with NO language meeting the age <= 5 criterion,
+# fall back to the language in the first slot (lowest slot number)
+l1_fallback <- long_data |>
+  filter(!(.row_id %in% l1_data$.row_id)) |>   # only participants missing an L1 so far
+  group_by(.row_id) |>
+  arrange(slot, .by_group = TRUE) |>
+  slice(1) |>
+  ungroup() |>
+  select(.row_id, L1 = language_name)
+
+# Combine primary L1 assignments with fallback assignments
+l1_data <- bind_rows(l1_data, l1_fallback)
+
+# Merge L1 back into main dataset
+xdata <- xdata |>
+  left_join(l1_data, by = ".row_id")
+
+# --- 3. Map L1 onto tonal_system from the `tone` lookup table ----------------
+xdata <- xdata |>
+  left_join(tone |> select(language_name, description) |> rename(L1_tonal_system = description),
+            by = c("L1" = "language_name"))
+
+# --- 4. Classify non-L1 languages: only non-tonal / at least simple / at least complex ----
+# Get tonal_system for every language slot (not just L1), then exclude L1 itself
+non_l1_data <- long_data |>
+  left_join(xdata |> select(.row_id, L1), by = ".row_id") |>
+  filter(language_name != L1) |>                      # drop the L1 slot
+  left_join(tone |> select(language_name, description), by = "language_name")
+
+# Summarize per participant: what's the "highest" tonal complexity among non-L1 languages?
+non_l1_summary <- non_l1_data |>
+  group_by(.row_id) |>
+  summarise(
+    has_complex    = any(description == "Comnplex tone system", na.rm = TRUE),
+    has_simple     = any(description == "Simple tone system", na.rm = TRUE),
+    n_non_l1_langs = n(),
+    .groups = "drop"
+  ) |>
+  mutate(
+    is_monolingual = n_non_l1_langs == 0,
+    non_L1_tonal_system = case_when(
+      is_monolingual ~ "monolingual",
+      has_complex    ~ "at least one complex",
+      has_simple     ~ "at least one simple",
+      TRUE           ~ "only non-tonal"
+    )
+  ) |>
+  select(.row_id, is_monolingual, non_L1_tonal_system)
+
+# --- 5. Merge everything back into the main dataset --------------------------
+xdata <- xdata |>
+  left_join(non_l1_summary, by = ".row_id") |>
+  mutate(
+    is_monolingual = ifelse(is.na(is_monolingual) & !is.na(L1), TRUE, is_monolingual),
+    non_L1_tonal_system = ifelse(is_monolingual & is.na(non_L1_tonal_system), "monolingual", non_L1_tonal_system)
+  ) |>
+  select(-.row_id)
+
+```
+
+## Combine with Ting et al.s productions averages
+
+```{r}
+#| label: add-ting-et-al
+
+ting <- ting |> 
+  rename(L1 = language)
+
+# left_join with other infos
+xdata <- 
+  xdata |> 
+  left_join(ting, by = c("L1")) 
+
+```
+
+
+## Wrangle Musical Experiences
+
+```{r}
+#| label: wrangle-music
+
+# if group_singing / solo_vocal false, store as 0 else store years
+xdata <- xdata |>
+  mutate(group_singing_merged = ifelse(group_singing == FALSE, 0,
+                                       group_singing_year),
+         solo_vocal_merged = ifelse(solo_vocal == FALSE, 0,
+                                    solo_vocal_year),
+         instrument_training = ifelse(is.na(instrument_training), FALSE, instrument_training),
+         musical_level = ifelse(is.na(musical_level), "beginner", musical_level),
+         musical_training_year = ifelse(is.na(musical_training_year), 0, musical_training_year)
+         )
+
+```
+
+# Random Forests
+## Prepare for RF
 
 ```{r}
 #| label: prepare-for-rf
 
 # predictors
-demographic_vars <- c("birthyear", "sex", "instrument", "instrument_training", "musical_level",
-                      "musical_training_year", "music_hour", "group_singing", "group_singing_year", 
-                      "solo_vocal", "solo_vocal_year")
+demographic_vars <- c(# general demographics
+                      "birthyear", "sex", 
+                      # linguistics
+                      "L1", "L1_tonal_system",
+                      "non_L1_tonal_system",
+                      # production
+                      "effect_size_est", "effect_length_est", 
+                      # music experience
+                      "instrument",
+                      "instrument_training", "musical_level",
+                      "musical_training_year", "music_hour",
+                      "group_singing_merged", "solo_vocal_merged")
 
 # model formula
 model_formula <- as.formula(
@@ -75,15 +247,6 @@ model_formula <- as.formula(
 )
 
 model_data <- xdata[, c("P_prop", demographic_vars)]   # keep only relevant columns
-model_data <- model_data |> 
-  # cforest doesn't handle NAs internally
-  mutate(instrument_training = ifelse(is.na(instrument_training), FALSE, instrument_training),
-         musical_level = ifelse(is.na(musical_level), "no information", musical_level),
-         musical_training_year = ifelse(is.na(musical_training_year), 0, musical_training_year),
-         group_singing_year = ifelse(is.na(group_singing_year), 0, group_singing_year),
-         solo_vocal_year = ifelse(is.na(solo_vocal_year), 0, solo_vocal_year)
-         )
-
 
 model_data <- model_data  |> 
   mutate(across(where(is.character), as.factor))  |> 
@@ -106,7 +269,7 @@ tuning_grid <- expand.grid(
 
 ```
 
-Loop through your grid, fit a ranger model for each combination, and extract the Out-of-Bag Mean Squared Error ($OOB\_MSE$) from the forest component to evaluate performance.
+Loop through the grid, fit a ranger model for each combination, and extract the Out-of-Bag Mean Squared Error ($OOB\_MSE$) from the forest component to evaluate performance.
 
 ```{r}
 #| label: run-grid-search
@@ -158,25 +321,27 @@ best_params <- tuning_df[1, ]
 cat("\nBest hyperparameters selected:\n")
 print(best_params)
 
+# however, given the small sample in pilot (n = 34), we need to drastically lower minbucket.
 
 ```
 
 ## Optimal Model
 
-Once the loop finishes, look at your grid to find the row with the lowest error score and use those exact parameters to train your final model.
+Once the loop finishes, look at grid to find the row with the lowest error score and use those exact parameters to train final model.
 
 ```{r}
 #| label: identify-optimal-model
 
 set.seed(123)
 
-cf_model <- cforest(
+cf_model <- party::cforest(
   model_formula,
   data = model_data,
   controls = cforest_unbiased(
     ntree     = 1000,   # bump up ntree for the final model for stability
     mtry      = best_params$mtry,
-    minbucket = best_params$minbucket,
+    #minbucket = best_params$minbucket,
+    minbucket = 3,
     maxdepth  = best_params$maxdepth
   )
 )
@@ -200,7 +365,7 @@ set.seed(123)
 cond_importance <- permimp(
   cf_model,
   conditional = TRUE,
-  threshold = 0.2,
+  threshold = 0.95,
   asParty = TRUE,      # use the original party-style algorithm instead
   progressBar = TRUE
 )
@@ -273,13 +438,11 @@ combined_tbl <- map_dfr(pdp_list, function(pd) {
 # separate factors from numeric to better plot
 combined_tbl_numeric  <- 
   combined_tbl |> 
-  filter(predictor_name %in% c("group_singing_year", 
-                              "music_hour", 
-                              "musical_training_year"))
+  filter(predictor_name %in% c("birthyear"))
 combined_tbl_factors <- 
   combined_tbl |> 
-  filter(predictor_name %in% c("instrument", 
-                              "instrument_training"))
+  filter(predictor_name %in% c("sex", "non_L1_tonal_system",
+                               "L1_tonal_system", "L1"))
 
 # plot
 combined_tbl_numeric |> 
@@ -305,9 +468,4 @@ combined_tbl_factors |>
       y = "recovered pitch proportion") +
   theme_minimal()
 
-
-
-
 ```
-
-

@@ -82,8 +82,7 @@ descriptive_plot
 
 ```
 
-What we do see are ordered (albeit noisy) effects. But seemingly much smaller than the original study suggested.
-Now we compare these pilot results to the projected results based on Hombert (1975).
+What we do see are ordered (albeit noisy) effects. But seemingly much smaller than the original study suggested. Now we compare these pilot results to the projected results based on Hombert (1975).
 
 ```{r}
 #| label: hombert-comparison
