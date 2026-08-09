@@ -1,0 +1,231 @@
+---
+title: "06_language_variance_design_analysis"
+format:
+  html:
+    embed-resources: true
+    toc: true
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(brms, ggplot2, here, tidyverse, dplyr)
+
+# global seed
+set.seed(211)
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# A smallest effect size of interest (SESOI) for RQ2.1
+
+RQ2.1 asks whether P_rec is independent of the language population, answered by LOOIC-based model comparison. As registered, there is no criterion for how large a between-language difference would need to be to be practically meaningful. Defining such a criterion (a smallest effect size of interest, SESOI) has two payoffs: the LOOIC verdict becomes interpretable in both directions — including a positive statement that language variation is *practically negligible* — and a design analysis for RQ2.1 becomes possible in the first place.
+
+We anchor the SESOI in the measurement precision of the task itself: the median within-participant SD of responses on the flat control trials (Δf0 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard 1985). Between-language differences smaller than a single listener's own matching noise are arguably not interpretable, which makes this floor a defensible SESOI stated entirely in terms of our own instrument and pilot data. Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it slightly — a stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
+
+```{r}
+#| label: sesoi
+
+# load in data
+xdata <- read_csv(here::here("data", "derived", "data_after_exclusion.csv"))
+
+# median within-participant matching SD on flat control trials (Hz)
+flat_sd <- xdata |>
+  filter(delta_f_raw == 0) |>
+  group_by(participantID) |>
+  summarise(sd_hz = sd(response_f_rel))
+
+delta_star_hz <- median(flat_sd$sd_hz)
+
+# convert to semitones at the 150 Hz reference
+delta_star <- 12 * log2((150 + delta_star_hz) / 150)
+
+# The by-language effect is modeled as a normal distribution with SD tau.
+# The mean absolute difference between two random languages is then
+# (2 / sqrt(pi)) * tau = 1.128 * tau, so the SESOI on the difference scale
+# maps onto the random-SD scale as:
+tau_star <- delta_star / (2 / sqrt(pi))
+
+delta_star_hz   # ~2.4 Hz
+delta_star      # ~0.28 st
+tau_star        # ~0.25 st
+
+```
+
+# Design analysis
+
+With a SESOI in place we can ask: does the planned design distinguish practically relevant from practically negligible language variation? We run this at the planned design — 20 core languages, with both 50 analyzable participants per language (as planned) and 60 (as recommended by the updated sample size estimation) — rather than solving for a required sample size, because the binding constraint on estimating the between-language SD τ is the number of languages: 20 language means are the 20 observations from which τ is estimated, and this number is fixed by the consortium. The per-language sample size only shrinks the sampling error of each language mean, with rapidly diminishing returns beyond ~50. Note that, like the registered model comparison, this analysis targets the aggregate between-language variation τ: it is not designed to identify which specific languages differ, nor to test grouped contrasts such as tonal vs. non-tonal language populations, which remain part of the exploratory analyses.
+
+For the critical contrast (Δf0 = -10 vs +10 Hz at Δt = 140 ms, 2 repetitions per condition), each language's mean contrast has sampling variance (τ²_participant + σ²) / 50, so the language level reduces to a 20-point meta-analytic problem: a hierarchical model of 20 language means with known sampling error. This keeps each simulated study cheap (a 20-row brms fit).
+
+Participant-level parameters are drawn per simulation from the pilot posteriors — the fixed effect and by-participant contrast SD implied by Q1_mono_model (N = 3972), the residual SD from model_simple_df0 — so pilot uncertainty is propagated throughout.
+
+```{r}
+#| label: implied_parameters
+
+# load in models
+xmdl_full <- readRDS(here::here("models", "Q1_mono_model.rds"))
+xmdl      <- readRDS(here::here("models", "model_simple_df0.rds"))
+
+# residual sd: posterior draws
+sigma_draws <- as_draws_df(xmdl, variable = "sigma")$sigma
+
+# implied fixed effect and by-participant SD of the critical contrast:
+# per posterior draw, simulate hypothetical new participants from the fitted
+# random-effect distribution and predict both cells of the contrast
+n_new   <- 1000
+n_draws <- 2000
+
+f_levels <- sort(unique(xmdl_full$data$delta_f_raw_st_o))
+f_lo <- f_levels[4]   # -10 Hz
+f_hi <- f_levels[6]   # +10 Hz
+
+newdat <- expand_grid(
+  participantID = paste0("new_", seq_len(n_new)),
+  delta_f_raw_st_o = c(f_lo, f_hi),
+  delta_t_o = 140
+)
+
+draw_ids <- sample(ndraws(xmdl_full), n_draws)
+
+ep <- posterior_epred(
+  xmdl_full, newdata = newdat, draw_ids = draw_ids,
+  allow_new_levels = TRUE, sample_new_levels = "gaussian"
+)
+
+contrast <- ep[, newdat$delta_f_raw_st_o == f_hi] -
+            ep[, newdat$delta_f_raw_st_o == f_lo]
+
+par_draws <- tibble(
+  beta   = rowMeans(contrast),
+  tau_b1 = apply(contrast, 1, sd)
+)
+
+```
+
+Per simulated study we draw 20 true language means (SD = the true between-language τ), add their sampling error, fit the meta-analytic model, and record the posterior of τ_language. Verdicts follow the posterior probability relative to the SESOI-equivalent τ\*, using the same 95% standard as the sample size estimation:
+
+-   *practically relevant*: P(τ \> τ\*) ≥ 0.95
+-   *practically negligible*: P(τ \< τ\*) ≥ 0.95
+-   otherwise inconclusive.
+
+True τ is varied over 0, τ\*/2, τ\*, and 1.5 τ\* (boundary cases at τ\* should come out inconclusive).
+
+```{r}
+#| label: design_simulation
+
+# true between-language variation
+tau_grid <- c(0, tau_star / 2, tau_star, 1.5 * tau_star)
+
+# planned design
+n_lang <- 20
+
+# analyzable participants per language: 50 as planned, 60 as recommended by
+# the updated sample size estimation
+n_subj_grid <- c(50, 60)
+
+# number of sims per specification
+n_sims <- 150
+
+# meta-analytic model: language means with known sampling error
+formula_lang = brms::bf(contrast | se(se_j) ~ 1 + (1 | language))
+
+# my priors (same widths as in 03_sample_size_estimation)
+mypriors <- c(
+              brms::prior(cauchy(0, 0.38),
+                    class = "Intercept"),
+              brms::prior(cauchy(0, 0.38),
+                    class = "sd")
+              )
+
+# Container for results
+tau_list <- list()
+
+# Loop through sample sizes, true language variation, and fit models
+for (h in seq_along(n_subj_grid)) {
+  for (i in seq_along(tau_grid)) {
+    # Inner loop over simulations
+    for (j in 1:n_sims) {
+
+    # one joint posterior draw per simulated dataset
+    k <- sample(nrow(par_draws), 1)
+    s <- sample(sigma_draws, 1)
+
+    # sampling error of a language mean with n_subj participants
+    se_j <- sqrt((par_draws$tau_b1[k]^2 + s^2) / n_subj_grid[h])
+
+    # simulate language means
+    dat_sim <- data.frame(
+      language = factor(seq_len(n_lang)),
+      contrast = par_draws$beta[k] + rnorm(n_lang, 0, tau_grid[i]) + rnorm(n_lang, 0, se_j),
+      se_j     = se_j
+    )
+
+    if (h == 1 & i == 1 & j == 1) {
+      fit0 <- brm(
+        formula = formula_lang,
+        data = dat_sim,
+        iter = 4000,
+        warmup = 2000,
+        control = list(adapt_delta = 0.90),
+        prior = mypriors
+      )
+      fit <- fit0
+    } else {
+      # same model, new data; recompile = FALSE reuses the compiled program
+      fit <- update(fit0, newdata = dat_sim, recompile = FALSE)
+    }
+
+    # posterior of the between-language SD
+    tau_post <- as_draws_df(fit, variable = "sd_language__Intercept")$sd_language__Intercept
+
+    tau_list[[paste0("nsubj", h, "_tau", i, "_sim", j)]] <-
+      data.frame(n_subj    = n_subj_grid[h],
+                 tau_true  = tau_grid[i],
+                 sim_n     = j,
+                 tau_med   = median(tau_post),
+                 p_gt_star = mean(tau_post > tau_star),
+                 p_lt_star = mean(tau_post < tau_star))
+    }
+  }
+}
+
+```
+
+# Results
+
+```{r}
+#| label: extract_results
+
+# wrangle loop results
+loop_results <- bind_rows(tau_list)
+
+# save results
+write.csv(loop_results, here::here("data", "derived", "rq21_design_analysis.csv"))
+
+```
+
+```{r}
+#| label: design_results
+#| tbl-cap: "Verdict rates per true between-language tau (proportion of simulated studies)."
+
+loop_results <- read_csv(here::here("data", "derived", "rq21_design_analysis.csv"))
+
+loop_results |>
+  group_by(n_subj, tau_true) |>
+  summarise(
+    relevant     = mean(p_gt_star >= 0.95),
+    negligible   = mean(p_lt_star >= 0.95),
+    inconclusive = mean(p_gt_star < 0.95 & p_lt_star < 0.95),
+    tau_med      = median(tau_med)
+  )
+
+```
+
+In our run: when the true language variation is zero, all simulated studies affirm *practically negligible*, and 95-97% still do at half the SESOI-equivalent; at exactly τ\*, ~90% are inconclusive, as a boundary case should be; at 1.5 τ\*, 72% (n = 50) and 81% (n = 60) detect *practically relevant* variation. Median estimated τ tracks the true value closely at all levels, i.e. estimation is essentially unbiased. With the SESOI in place, the already-planned design therefore supports an interpretable answer to RQ2.1 in both directions.
