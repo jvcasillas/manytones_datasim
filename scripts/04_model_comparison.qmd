@@ -173,13 +173,15 @@ mypriors <- c(
               )
 
 # Run robust regression
+# NB: brm() reuses the cached models/Q1_mono_model.rds if it exists;
+# the cached file must be deleted for changed sampler settings to take effect
 mono_model <- brm(
   formula_mono,
   data = xdata,
   file = here::here("models", "Q1_mono_model"),
   family = student,
   seed = 123,
-  iter = 4000,
+  iter = 6000,
   warmup = 2000,
   save_pars = save_pars(all = TRUE),
   prior = mypriors, 
