@@ -112,13 +112,13 @@ Per simulated study we draw 20 true language means (SD = the true between-langua
 -   *practically negligible*: P(τ \< τ\*) ≥ 0.95
 -   otherwise inconclusive.
 
-True τ is varied over 0, τ\*/2, τ\*, and 1.5 τ\* (boundary cases at τ\* should come out inconclusive).
+True τ is varied over 0, τ\*/2, τ\*, 1.5 τ\*, and 1.75 τ\* (boundary cases at τ\* should come out inconclusive).
 
 ```{r}
 #| label: design_simulation
 
 # true between-language variation
-tau_grid <- c(0, tau_star / 2, tau_star, 1.5 * tau_star)
+tau_grid <- c(0, tau_star / 2, tau_star, 1.5 * tau_star, 1.75 * tau_star)
 
 # planned design
 n_lang <- 20
