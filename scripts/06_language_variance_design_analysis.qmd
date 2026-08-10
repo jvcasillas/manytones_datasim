@@ -27,7 +27,7 @@ options(mc.cores = parallel::detectCores())
 
 RQ2.1 asks whether P_rec is independent of the language population, answered by LOOIC-based model comparison. As registered, there is no criterion for how large a between-language difference would need to be to be practically meaningful. Defining such a criterion (a smallest effect size of interest, SESOI) has two payoffs: the LOOIC verdict becomes interpretable in both directions — including a positive statement that language variation is *practically negligible* — and a design analysis for RQ2.1 becomes possible in the first place.
 
-We anchor the SESOI in the measurement precision of the task itself: the median within-participant SD of responses on the flat control trials (Δf0 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard 1985). Between-language differences smaller than a single listener's own matching noise are arguably not interpretable, which makes this floor a defensible SESOI stated entirely in terms of our own instrument and pilot data. Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it slightly — a stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
+We anchor the SESOI in the measurement precision of the task itself: the median within-participant SD of responses on the flat control trials (Δf0 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard 1985). The SESOI is defined directly on the SD scale, comparing like with like: language populations should not vary among themselves by more than a single listener varies within themselves. This makes the floor a defensible SESOI stated entirely in terms of our own instrument and pilot data. Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it slightly — a stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
 
 ```{r}
 #| label: sesoi
@@ -46,15 +46,12 @@ delta_star_hz <- median(flat_sd$sd_hz)
 # convert to semitones at the 150 Hz reference
 delta_star <- 12 * log2((150 + delta_star_hz) / 150)
 
-# The by-language effect is modeled as a normal distribution with SD tau.
-# The mean absolute difference between two random languages is then
-# (2 / sqrt(pi)) * tau = 1.128 * tau, so the SESOI on the difference scale
-# maps onto the random-SD scale as:
-tau_star <- delta_star / (2 / sqrt(pi))
+# the SESOI applies directly on the SD scale: the between-language SD tau is
+# compared against the within-participant matching SD
+tau_star <- delta_star
 
 delta_star_hz   # ~2.4 Hz
-delta_star      # ~0.28 st
-tau_star        # ~0.25 st
+tau_star        # ~0.28 st
 
 ```
 
@@ -109,7 +106,7 @@ par_draws <- tibble(
 
 ```
 
-Per simulated study we draw 20 true language means (SD = the true between-language τ), add their sampling error, fit the meta-analytic model, and record the posterior of τ_language. Verdicts follow the posterior probability relative to the SESOI-equivalent τ\*, using the same 95% standard as the sample size estimation:
+Per simulated study we draw 20 true language means (SD = the true between-language τ), add their sampling error, fit the meta-analytic model, and record the posterior of τ_language. Verdicts follow the posterior probability relative to the SESOI τ\*, using the same 95% standard as the sample size estimation:
 
 -   *practically relevant*: P(τ \> τ\*) ≥ 0.95
 -   *practically negligible*: P(τ \< τ\*) ≥ 0.95
