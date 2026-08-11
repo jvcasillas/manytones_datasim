@@ -158,11 +158,11 @@ ggsave(filename = here::here("plots","hombert_comparison.png"),
 Alternative in percent recovered:
 
 ```{r}
-#| label: hombert-comparison
+#| label: hombert-comparison-prop
 #| fig-cap: "Comparison between descriptive means of Hombert (1975) and our pilot for all combinations of f0 slope and slope duration."
 
 # rename to match datasets
-hombert_renamed <- hombert |> 
+hombert_renamed <- hombert |>
   rename(delta_f_raw = target,
          delta_f_raw_st = target_st,
          delta_t = slope_dur,
@@ -536,3 +536,40 @@ ggplot(xagg_r_participants,
 ```
 
 Looking at the distribution of participants' average recovered f0, we can see a strong mode between 0 and 10% with two outliers that recover f0 close to 30%.
+
+## Direction accuracy
+
+The responses also encode whether a participant judged the *direction* of the f0 perturbation correctly on each trial (the `correct` column computed in `00_data_cleaning.qmd`). Averaged per participant over all moving trials, this gives a direction accuracy score on an identical scale for all participants. Relating it to the recovered f0 helps separate two mechanistically different reasons for low recovery: listeners who cannot resolve the direction of the onset movement versus listeners who resolve it but normalize it away.
+
+```{r}
+#| label: direction-accuracy
+#| fig-cap: "Per-participant mean direction accuracy against mean percentage of recovered f0 (moving trials only)."
+
+xagg_acc <- xdata |>
+  filter(delta_f_raw != 0) |>
+  group_by(participantID) |>
+  summarise(accuracy = mean(correct),
+            recovered_f0_st = mean(recovered_f0_st))
+
+# correlation between direction accuracy and recovered f0
+cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st)
+cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st, method = "spearman")
+
+ggplot(xagg_acc,
+       aes(x = accuracy,
+           y = recovered_f0_st)) +
+  geom_point(size = 3,
+             pch = 21,
+             color = "white",
+             fill = "#dd1c77") +
+  geom_hline(yintercept = c(0, 0.33),
+             lty = "dashed") +
+  scale_y_continuous(breaks = seq(-0.1, 0.4, 0.1),
+                     labels = paste0(seq(-0.1, 0.4, 0.1) * 100, "%")) +
+  labs(x = "direction accuracy",
+       y = "percentage of recovered f0") +
+  theme_minimal()
+
+```
+
+Direction accuracy and recovered f0 are strongly related across participants (r = 0.64 in the pilot): the participants who recover the most f0 are also those who most reliably identify the direction of the perturbation. This comes for free from already-logged responses and can serve as a descriptive/explanatory analysis alongside RQ2.2, since low recovery with high direction accuracy (resolved but normalized) and low recovery with chance-level accuracy (not resolved) would call for different interpretations.
