@@ -552,8 +552,8 @@ xagg_acc <- xdata |>
             recovered_f0_st = mean(recovered_f0_st))
 
 # correlation between direction accuracy and recovered f0
-cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st)
-cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st, method = "spearman")
+cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st) # 0.64
+cor(xagg_acc$accuracy, xagg_acc$recovered_f0_st, method = "spearman") # 0.68
 
 ggplot(xagg_acc,
        aes(x = accuracy,

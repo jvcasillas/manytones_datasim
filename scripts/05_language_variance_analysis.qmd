@@ -12,7 +12,7 @@ editor: visual
 #| include: FALSE
 
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(brms, ggplot2, here, tidyverse, dplyr)
+pacman::p_load(brms, here, tidyverse)
 
 # global seed
 set.seed(211)
@@ -25,9 +25,10 @@ options(mc.cores = parallel::detectCores())
 
 # A smallest effect size of interest (SESOI) for RQ2.1
 
-RQ2.1 asks whether P_rec is independent of the language population, answered by LOOIC-based model comparison. As registered, there is no criterion for how large a between-language difference would need to be to be practically meaningful. Defining such a criterion (a smallest effect size of interest, SESOI) has two payoffs: the LOOIC verdict becomes interpretable in both directions — including a positive statement that language variation is *practically negligible* — and a design analysis for RQ2.1 becomes possible in the first place.
+When it comes to the critical question of whether there is meaningful language variation,  the LOOIC-based model comparison provides no criterion for how large a between-language difference would need to be considered practically meaningful.
+We anchor the a smallest effect size of interest we deem theoretically interesting (SESOI; Lakens et al. 2018) in the measurement precision of the task itself: the median within-participant standard deviation (SD) of responses to the flat control trials (Δ𝑓 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard, 1985). The SESOI is defined directly on this SD scale, comparing like with like: language populations should systematically differ more than a single listener differs within themselves. We used simulation to evaluate how well the study's planned design (minimally 20 languages, 60 participants each, see participant sample size justification below) is capable of detecting such a difference if it exists.
 
-We anchor the SESOI in the measurement precision of the task itself: the median within-participant SD of responses on the flat control trials (Δf0 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard 1985). The SESOI is defined directly on the SD scale, comparing like with like: language populations should not vary among themselves by more than a single listener varies within themselves. This makes the floor a defensible SESOI stated entirely in terms of our own instrument and pilot data. Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it slightly — a stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
+Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it a slightly stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
 
 ```{r}
 #| label: sesoi
@@ -57,11 +58,11 @@ tau_star        # ~0.28 st
 
 # Design analysis
 
-With a SESOI in place we can ask: does the planned design distinguish practically relevant from practically negligible language variation? We run this at the planned design — 20 core languages, with both 50 analyzable participants per language (as planned) and 60 (as recommended by the updated sample size estimation) — rather than solving for a required sample size, because the binding constraint on estimating the between-language SD τ is the number of languages: 20 language means are the 20 observations from which τ is estimated, and this number is fixed by the consortium. The per-language sample size only shrinks the sampling error of each language mean, with rapidly diminishing returns beyond ~50. Note that, like the registered model comparison, this analysis targets the aggregate between-language variation τ: it is not designed to identify which specific languages differ, nor to test grouped contrasts such as tonal vs. non-tonal language populations, which remain part of the exploratory analyses.
+With a SESOI in place we can ask: does the planned design distinguish practically relevant from practically negligible language variation? We run this at the planned design — 20 core languages, with 60 participants — rather than solving for a required sample size, because the binding constraint on estimating the between-language SD τ is the number of languages: 20 language means are the 20 observations from which τ is estimated, and this number is fixed by the minimal sample plan of the project. The per-language sample size only shrinks the sampling error of each language mean, with rapidly diminishing returns beyond \~60. This analysis targets the aggregate between-language variation τ: it is not designed to identify which specific languages differ, nor to test grouped contrasts such as tonal vs. non-tonal language populations, which remain part of the exploratory analyses.
 
 For the critical contrast (Δf0 = -10 vs +10 Hz at Δt = 140 ms, 2 repetitions per condition), each language's mean contrast has sampling variance (τ²_participant + σ²) / 50, so the language level reduces to a 20-point meta-analytic problem: a hierarchical model of 20 language means with known sampling error. This keeps each simulated study cheap (a 20-row brms fit).
 
-Participant-level parameters are drawn per simulation from the pilot posteriors — the fixed effect and by-participant contrast SD implied by Q1_mono_model (N = 3972), the residual SD from model_simple_df0 — so pilot uncertainty is propagated throughout.
+Participant-level parameters are drawn per simulation from the pilot posteriors — the fixed effect and by-participant contrast SD implied by `models/Q1_mono_model` (N = 3972), the residual SD from `models/model_simple_df0` — so pilot uncertainty is propagated throughout.
 
 ```{r}
 #| label: implied_parameters
@@ -106,29 +107,28 @@ par_draws <- tibble(
 
 ```
 
-Per simulated study we draw 20 true language means (SD = the true between-language τ), add their sampling error, fit the meta-analytic model, and record the posterior of τ_language. Verdicts follow the posterior probability relative to the SESOI τ\*, using the same 95% standard as the sample size estimation:
+Per simulated study we draw 20 true language means (SD = the true between-language τ), add their sampling error, fit the meta-analytic model, and record the posterior of between-language variation. Verdicts follow the posterior probability relative to the SESOI τ\*, using the same 95% standard as the sample size estimation:
 
--   *practically relevant*: P(τ \> τ\*) ≥ 0.95
--   *practically negligible*: P(τ \< τ\*) ≥ 0.95
--   otherwise inconclusive.
+- *practically relevant*: P(τ \> τ\*) ≥ 0.95
+- *practically negligible*: P(τ \< τ\*) ≥ 0.95
+- otherwise inconclusive.
 
-True τ is varied over 0, τ\*/2, τ\*, 1.5 τ\*, and 1.75 τ\* (boundary cases at τ\* should come out inconclusive).
+True τ is varied over 0, τ\*/2, τ\*, 1.5 τ\*, and 2 τ\* (boundary cases at τ\* should come out inconclusive).
 
 ```{r}
 #| label: design_simulation
 
 # true between-language variation
-tau_grid <- c(0, tau_star / 2, tau_star, 1.5 * tau_star, 1.75 * tau_star)
+tau_grid <- c(0, tau_star / 2, tau_star, 1.5 * tau_star, 2 * tau_star)
 
 # planned design
 n_lang <- 20
 
-# analyzable participants per language: 50 as planned, 60 as recommended by
-# the updated sample size estimation
-n_subj_grid <- c(50, 60)
+# analyzable participants per language: 60 as recommended 
+n_subj_grid <- 60
 
 # number of sims per specification
-n_sims <- 150
+n_sims <- 200
 
 # meta-analytic model: language means with known sampling error
 formula_lang = brms::bf(contrast | se(se_j) ~ 1 + (1 | language))
@@ -225,4 +225,4 @@ loop_results |>
 
 ```
 
-In our run: when the true language variation is zero, all simulated studies affirm *practically negligible*, and 97-99% still do at half the SESOI; at exactly τ\*, ~90% are inconclusive, as a boundary case should be; at 1.5 τ\*, 73% (n = 50) and 77% (n = 60) detect *practically relevant* variation, rising to 95% (n = 50) and 97% (n = 60) at 1.75 τ\*. Median estimated τ tracks the true value closely at all levels, i.e. estimation is essentially unbiased. With the SESOI in place, the already-planned design therefore supports an interpretable answer to RQ2.1 in both directions: it reliably certifies independence for true variation at or below half the SESOI, reliably detects dependence at or above 1.75 τ\*, and is explicitly agnostic in between.
+In our run: when the true language variation is zero, 100% of simulated studies affirm *practically negligible* effects, and 99% still do at half the SESOI; at exactly τ\*, \~90% are inconclusive, as a boundary case should be; at 1.5 τ\*, 75% detect *practically relevant* variation, rising to 100% at 2 τ\*. Median estimated τ tracks the true value closely at all levels, i.e. estimation is essentially unbiased. With the SESOI in place, the already-planned design therefore supports an interpretable answer to RQ2.1 in both directions: it reliably certifies independence for true variation at or below half the SESOI, reliably detects dependence at or above 2 τ\*, and is explicitly agnostic in between.

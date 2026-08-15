@@ -37,12 +37,10 @@ xdata <- read_csv(here::here("data", "derived", "data_after_exclusion.csv"))
 
 # Simulating data based on model parameters
 
-Based on the critical contrast implied by the full pilot model (Q1_mono_model, fitted to all N = 3972 pilot observations; Δf0 = -10 vs +10 Hz at Δt = 140 ms), alongside the implied variance components (random intercepts, random slopes, and correlation between them), we generated 200 datasets with these properties for a range of sample sizes \[25-75\]. To propagate the uncertainty of the pilot estimates into the design analysis, each simulated dataset uses one joint draw from the posterior of these parameters rather than their point estimates. The residual SD is drawn from the posterior of the two-condition model (model_simple_df0) fitted to the two cells of the critical contrast only, so that no homogeneity-of-variance assumption across cells is introduced. For each simulation, we fitted a model as specified in (1) to the data and estimated the Bayes Factor for the critical coefficient being larger than point-zero, using the Savage-Dickey density ratio implemented in the bayestestR packages (Makowski et al. 2019 The Savage-Dickey density ratio (e.g. Dickey & Lientz 1970, Wagenmakers et al. 2010) relates the amount of evidence (the density of posterior samples) at point-zero for the model based on the priors only (i.e. before seeing the data) to the amount of evidence for the model based on both priors and likelihood (i.e. after seeing the data) (Liao et al. 2021). The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes Factor (BF) and is particularly suited for nested models, especially when models only differ with respect to one parameter.
+Based on the critical contrast implied by the full pilot model (Q1_mono_model, fitted to all N = 3972 pilot observations; Δf0 = -10 vs +10 Hz at Δt = 140 ms), alongside the implied variance components (random intercepts, random slopes, and correlation between them), we generated 200 datasets with these properties for a range of sample sizes \[25-75\]. To propagate the uncertainty of the pilot estimates into the design analysis, each simulated dataset uses one joint draw from the posterior of these parameters rather than their point estimates. The residual SD is drawn from the posterior of the two-condition model (model_simple_df0) fitted to the two cells of the critical contrast only, so that no homogeneity-of-variance assumption across cells is introduced. For each simulation, we fitted a model to the data and estimated the Bayes Factor for the critical coefficient being larger than point-zero, using the Savage-Dickey density ratio implemented in the bayestestR packages (Makowski et al. 2019 The Savage-Dickey density ratio (e.g. Dickey & Lientz 1970, Wagenmakers et al. 2010) relates the amount of evidence (the density of posterior samples) at point-zero for the model based on the priors only (i.e. before seeing the data) to the amount of evidence for the model based on both priors and likelihood (i.e. after seeing the data) (Liao et al. 2021). The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes Factor (BF) and is particularly suited for nested models, especially when models only differ with respect to one parameter.
 
 ```{r}
 #| label: parameter_extraction
-
-# NOTE: currently still based on the gaussian models. needs to be updated if we go with the student error terms
 
 # load in models
 # model_simple_df0 (N = 131): source of the intercept and of the residual SD
@@ -154,7 +152,6 @@ df <-   add_random(subject = subj_n) |>
 df
 }
 
-
 ## sanity check
 my_sim_data() |> 
   ggplot() +
@@ -194,7 +191,7 @@ bfs_list <- list()
 subject_list <- list()
 
 # Define subject number for different models (25-75)
-subjects <- as.list(seq(25,75,5))
+subjects <- as.list(seq(40,80,5))
 
 # Loop through priors and fit models
 for (i in seq_along(subjects)) {
@@ -271,7 +268,7 @@ model_q05 <- rq(BF ~ subj_n, data = loop_results, tau = 0.05)
 model_med <- rq(BF ~ subj_n, data = loop_results, tau = 0.50) # Empirical Median
 
 # generate predictions across your 25, 75 subject range
-new_data <- data.frame(subj_n = seq(25, 75, by = 1))
+new_data <- data.frame(subj_n = seq(40, 80, by = 1))
 
 empirical_bounds <- data.frame(
   subj_n    = new_data$subj_n,
@@ -279,7 +276,6 @@ empirical_bounds <- data.frame(
   BF_l05    = predict(model_q05, newdata = new_data)
 )
 
-# ~60 participants: in our runs, n = 50 reached BF > 10 in 92% of simulations,
 # n = 60 in ~95% (i.e. recruit ~72 per language under the 20% exclusion buffer)
 
 # colors for sequential
@@ -307,8 +303,8 @@ ggplot(data = empirical_bounds,
   scale_y_continuous(trans = "log10",
                      breaks = c(0.1, 1, 10, 100, 1000, 8000),
                      labels = c(0.1, 1, 10, 100, 1000, 8000)) +
-  scale_x_continuous(limits = c(20, 90),
-                     breaks = seq(25, 75, 5)) +
+  scale_x_continuous(limits = c(40, 100),
+                     breaks = seq(40, 80, 5)) +
   labs(x = "\nnumber of subjects",
        y = "Bayes Factor for beta > 0 over beta < 0\n") +
   theme_minimal() +
