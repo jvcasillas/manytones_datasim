@@ -25,8 +25,7 @@ options(mc.cores = parallel::detectCores())
 
 # A smallest effect size of interest (SESOI) for RQ2.1
 
-When it comes to the critical question of whether there is meaningful language variation,  the LOOIC-based model comparison provides no criterion for how large a between-language difference would need to be considered practically meaningful.
-We anchor the a smallest effect size of interest we deem theoretically interesting (SESOI; Lakens et al. 2018) in the measurement precision of the task itself: the median within-participant standard deviation (SD) of responses to the flat control trials (Δ𝑓 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard, 1985). The SESOI is defined directly on this SD scale, comparing like with like: language populations should systematically differ more than a single listener differs within themselves. We used simulation to evaluate how well the study's planned design (minimally 20 languages, 60 participants each, see participant sample size justification below) is capable of detecting such a difference if it exists.
+When it comes to the critical question of whether there is meaningful language variation, the LOOIC-based model comparison provides no criterion for how large a between-language difference would need to be considered practically meaningful. We anchor the a smallest effect size of interest we deem theoretically interesting (SESOI; Lakens et al. 2018) in the measurement precision of the task itself: the median within-participant standard deviation (SD) of responses to the flat control trials (Δ𝑓 = 0), i.e. the noise with which a single listener reproduces a target that requires no perceptual repair. Matching-response SD is the standard precision measure for matching tasks (Hartmann, Rakerd & Packard, 1985). The SESOI is defined directly on this SD scale, comparing like with like: language populations should systematically differ more than a single listener differs within themselves. We used simulation to evaluate how well the study's planned design (minimally 20 languages, 60 participants each, see participant sample size justification below) is capable of detecting such a difference if it exists.
 
 Note that the exclusion pipeline in `00_data_cleaning.qmd` screens participants partly on their control-trial behavior, so computing the floor on post-exclusion data trims it a slightly stricter (smaller) SESOI, i.e. the conservative direction — and describes the analyzable population that the Stage 2 models will actually see.
 
@@ -204,7 +203,7 @@ for (h in seq_along(n_subj_grid)) {
 loop_results <- bind_rows(tau_list)
 
 # save results
-write.csv(loop_results, here::here("data", "derived", "rq21_design_analysis.csv"))
+write.csv(loop_results, here::here("data", "derived", "language_variance_analysis.csv"))
 
 ```
 
@@ -212,7 +211,7 @@ write.csv(loop_results, here::here("data", "derived", "rq21_design_analysis.csv"
 #| label: design_results
 #| tbl-cap: "Verdict rates per true between-language tau (proportion of simulated studies)."
 
-loop_results <- read_csv(here::here("data", "derived", "rq21_design_analysis.csv"))
+loop_results <- read_csv(here::here("data", "derived", "language_variance_analysis.csv"))
 
 loop_results |>
   group_by(n_subj, tau_true) |>

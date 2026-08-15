@@ -32,6 +32,7 @@ pacman::p_load(viridis, tidyverse, here, knitr, kableExtra, broom, patchwork, pl
 ```
 
 # Data Preparation
+
 ## Read Data
 
 ```{r}
@@ -202,7 +203,6 @@ xdata <-
 
 ```
 
-
 ## Wrangle Musical Experiences
 
 ```{r}
@@ -222,6 +222,7 @@ xdata <- xdata |>
 ```
 
 # Random Forests
+
 ## Prepare for RF
 
 ```{r}
